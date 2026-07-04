@@ -5,6 +5,7 @@
 
 #include "board.hpp"
 #include "movegen.hpp"
+#include "nnue.hpp"
 #include "search.hpp"
 
 namespace aurora::chess
@@ -13,11 +14,13 @@ namespace aurora::chess
     class Engine
     {
     public:
-        explicit Engine(std::string_view name = "Aurora") noexcept;
+        explicit Engine(std::string_view name = "Aurora");
 
         [[nodiscard]] std::string_view name() const noexcept;
         [[nodiscard]] std::string version() const noexcept;
         [[nodiscard]] std::string describe() const noexcept;
+        [[nodiscard]] bool nnue_loaded() const noexcept;
+        [[nodiscard]] std::string_view nnue_path() const noexcept;
 
         void set_position(std::string_view fen);
         bool make_move(Move move);
@@ -29,6 +32,7 @@ namespace aurora::chess
     private:
         std::string name_;
         Board board_;
+        NnueEvaluator evaluator_;
         mutable TranspositionTable ttable_;
     };
 

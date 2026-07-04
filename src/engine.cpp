@@ -6,7 +6,10 @@
 
 namespace aurora::chess
 {
-    Engine::Engine(std::string_view name) noexcept : name_(name), ttable_(1 << 20) {}
+    Engine::Engine(std::string_view name) : name_(name), ttable_(1 << 20)
+    {
+        [[maybe_unused]] const bool loaded = evaluator_.load_default();
+    }
 
     std::string_view Engine::name() const noexcept
     {
@@ -21,6 +24,16 @@ namespace aurora::chess
     std::string Engine::describe() const noexcept
     {
         return std::string{name_} + " Chess Engine v" + version();
+    }
+
+    bool Engine::nnue_loaded() const noexcept
+    {
+        return evaluator_.is_loaded();
+    }
+
+    std::string_view Engine::nnue_path() const noexcept
+    {
+        return evaluator_.path();
     }
 
     void Engine::set_position(std::string_view fen)
@@ -49,6 +62,6 @@ namespace aurora::chess
 
     SearchResult Engine::search(SearchLimits limits) const
     {
-        return aurora::chess::search(board_, limits, ttable_);
+        return aurora::chess::search(board_, limits, ttable_, evaluator_);
     }
 } // namespace aurora::chess

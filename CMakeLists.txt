@@ -85,6 +85,7 @@ add_library(aurora_chess STATIC
     src/evaluation.cpp
     src/movegen.cpp
     src/movepick.cpp
+    src/nnue.cpp
     src/perft.cpp
     src/search.cpp
     src/see.cpp
@@ -121,6 +122,7 @@ add_executable(aurora_chess_tests
     tests/test_pext.cpp
     tests/test_movegen.cpp
     tests/test_movepick.cpp
+    tests/test_nnue.cpp
     tests/test_perft.cpp
     tests/test_search.cpp
     tests/test_see.cpp

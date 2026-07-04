@@ -60,52 +60,39 @@ namespace aurora::chess
             return text;
         }
 
-        [[nodiscard]] std::uint64_t nodes_per_second(std::uint64_t nodes, std::chrono::steady_clock::duration elapsed) noexcept
+        [[nodiscard]] std::uint64_t nodes_per_second(std::uint64_t nodes,
+                                                     std::chrono::steady_clock::duration elapsed) noexcept
         {
             const auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
             if (elapsed_ns <= 0)
             {
                 return 0;
             }
-            return static_cast<std::uint64_t>((static_cast<long double>(nodes) * 1'000'000'000.0L) / static_cast<long double>(elapsed_ns));
+            return static_cast<std::uint64_t>((static_cast<long double>(nodes) * 1'000'000'000.0L) /
+                                              static_cast<long double>(elapsed_ns));
         }
 
-        void print_speed_header(std::ostream &output)
+        void print_speed_header(std::ostream& output)
         {
-            output << std::left
-                   << std::setw(8) << "Depth"
-                   << std::setw(14) << "Nodes"
-                   << std::setw(12) << "Captures"
-                   << std::setw(8) << "E.p."
-                   << std::setw(10) << "Castles"
-                   << std::setw(12) << "Promotions"
-                   << std::setw(10) << "Checks"
-                   << std::setw(12) << "Checkmates"
-                   << std::setw(14) << "Cum NPS" << '\n'
+            output << std::left << std::setw(8) << "Depth" << std::setw(14) << "Nodes" << std::setw(12) << "Captures"
+                   << std::setw(8) << "E.p." << std::setw(10) << "Castles" << std::setw(12) << "Promotions"
+                   << std::setw(10) << "Checks" << std::setw(12) << "Checkmates" << std::setw(14) << "Cum NPS" << '\n'
                    << std::flush;
         }
 
-        void print_speed_row(std::ostream &output, const SpeedStats &stats, std::uint64_t nps)
+        void print_speed_row(std::ostream& output, const SpeedStats& stats, std::uint64_t nps)
         {
-            output << std::left
-                   << std::setw(8) << stats.depth
-                   << std::setw(14) << stats.nodes
-                   << std::setw(12) << stats.captures
-                   << std::setw(8) << stats.en_passant
-                   << std::setw(10) << stats.castles
-                   << std::setw(12) << stats.promotions
-                   << std::setw(10) << stats.checks
-                   << std::setw(12) << stats.checkmates
-                   << std::setw(14) << nps << '\n'
+            output << std::left << std::setw(8) << stats.depth << std::setw(14) << stats.nodes << std::setw(12)
+                   << stats.captures << std::setw(8) << stats.en_passant << std::setw(10) << stats.castles
+                   << std::setw(12) << stats.promotions << std::setw(10) << stats.checks << std::setw(12)
+                   << stats.checkmates << std::setw(14) << nps << '\n'
                    << std::flush;
         }
 
-        void print_search_info(std::ostream &output, const SearchIteration &iteration)
+        void print_search_info(std::ostream& output, const SearchIteration& iteration)
         {
-            output << "info depth " << iteration.depth
-                   << " seldepth " << iteration.selective_depth
-                   << " score cp " << iteration.score
-                   << " nodes " << iteration.nodes;
+            output << "info depth " << iteration.depth << " seldepth " << iteration.selective_depth << " score cp "
+                   << iteration.score << " nodes " << iteration.nodes;
             if (!iteration.pv.empty())
             {
                 output << " pv";
@@ -176,10 +163,10 @@ namespace aurora::chess
             return position;
         }
 
-        bool play_uci_move(Engine &engine, std::string_view move_text)
+        bool play_uci_move(Engine& engine, std::string_view move_text)
         {
             const auto moves = engine.legal_moves();
-            for (const auto &entry : moves)
+            for (const auto& entry : moves)
             {
                 if (move_to_uci(entry.move) == move_text)
                 {
@@ -191,7 +178,7 @@ namespace aurora::chess
 
     } // namespace
 
-    void run_uci_loop(Engine &engine, std::istream &input, std::ostream &output)
+    void run_uci_loop(Engine& engine, std::istream& input, std::ostream& output)
     {
         std::string line;
         while (std::getline(input, line))
@@ -208,14 +195,23 @@ namespace aurora::chess
             }
             else if (command == "uci")
             {
-                output << "id name " << engine.name() << "\nid author Aurora\nuciok\n";
+                output << "id name " << engine.name() << "\nid author Aurora\n";
+                if (engine.nnue_loaded())
+                {
+                    output << "info string NNUE evaluation using " << engine.nnue_path() << '\n';
+                }
+                else
+                {
+                    output << "info string NNUE evaluation unavailable, using PSQT\n";
+                }
+                output << "uciok\n";
             }
             else if (command.rfind("position ", 0) == 0)
             {
                 if (const auto position = parse_position(command))
                 {
                     engine.set_position(position->fen);
-                    for (const auto &move : position->moves)
+                    for (const auto& move : position->moves)
                     {
                         if (!play_uci_move(engine, move))
                         {
@@ -241,7 +237,7 @@ namespace aurora::chess
                 const auto start = std::chrono::steady_clock::now();
                 Board board = engine.board();
                 const auto moves = MoveGenerator{}.generate(board);
-                for (const auto &entry : moves)
+                for (const auto& entry : moves)
                 {
                     if (!board.make_move(entry.move))
                     {
@@ -285,10 +281,8 @@ namespace aurora::chess
 
                 SearchLimits limits;
                 limits.depth = depth;
-                limits.on_iteration = [&output](const SearchIteration &iteration)
-                {
-                    print_search_info(output, iteration);
-                };
+                limits.on_iteration = [&output](const SearchIteration& iteration)
+                { print_search_info(output, iteration); };
 
                 const auto result = engine.search(limits);
                 output << "bestmove " << (result.best_move == 0 ? "0000" : move_to_uci(result.best_move)) << '\n'
