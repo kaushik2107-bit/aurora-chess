@@ -176,7 +176,20 @@ namespace aurora::chess
             }
 
             std::vector<Move> child_pv;
-            const Score score = -alpha_beta(board, depth - 1, -beta, -alpha, ply + 1, child_pv, state);
+            Score score;
+            if (entry.move == tt_move)
+            {
+                score = -alpha_beta(board, depth - 1, -beta, -alpha, ply + 1, child_pv, state);
+            }
+            else
+            {
+                score = -alpha_beta(board, depth - 1, -alpha - 1, -alpha, ply + 1, child_pv, state);
+                if (score > alpha && score < beta)
+                {
+                    score = -alpha_beta(board, depth - 1, -beta, -alpha, ply + 1, child_pv, state);
+                }
+            }
+
             board.undo_move();
 
             best_score = std::max(best_score, score);
@@ -278,8 +291,14 @@ namespace aurora::chess
             Score alpha = -kInfiniteScore;
 
             const Move previous_best = result.best_move;
+            Move root_tt_move = 0;
+            if (const auto* root_entry = table.probe(working.key()))
+            {
+                root_tt_move = root_entry->best_move;
+            }
+
             auto moves = MoveGenerator{}.generate(working);
-            score_and_sort_moves(working, moves, previous_best);
+            score_and_sort_moves(working, moves, previous_best != 0 ? previous_best : root_tt_move);
 
             for (const auto& entry : moves)
             {
