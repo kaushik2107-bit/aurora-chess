@@ -1,6 +1,8 @@
 #include "engine.hpp"
 #include "perft.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -46,13 +48,38 @@ namespace aurora::chess
         return board_.make_move(move);
     }
 
+    void Engine::new_game()
+    {
+        board_.set_fen(kStartFen);
+        clear_hash();
+    }
+
+    void Engine::clear_hash()
+    {
+        ttable_.clear();
+    }
+
+    void Engine::set_hash_size_mb(std::size_t megabytes)
+    {
+        constexpr std::size_t kBytesPerMegabyte = 1024 * 1024;
+        const std::size_t bytes = std::max<std::size_t>(1, megabytes) * kBytesPerMegabyte;
+        const std::size_t entries = std::max<std::size_t>(1, bytes / sizeof(TranspositionEntry));
+        ttable_.resize(entries);
+    }
+
     const Board& Engine::board() const noexcept
     {
         return board_;
     }
+
     MoveList Engine::legal_moves() const
     {
         return MoveGenerator{}.generate(board_);
+    }
+
+    Score Engine::evaluate() const noexcept
+    {
+        return evaluator_.evaluate(board_);
     }
 
     std::uint64_t Engine::perft(std::size_t depth) const

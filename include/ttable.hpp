@@ -33,7 +33,9 @@ namespace aurora::chess
         explicit TranspositionTable(std::size_t entry_count = 1 << 20);
 
         void clear();
-        [[nodiscard]] const TranspositionEntry *probe(Key key) const noexcept;
+        void resize(std::size_t entry_count);
+        [[nodiscard]] std::size_t entry_count() const noexcept;
+        [[nodiscard]] const TranspositionEntry* probe(Key key) const noexcept;
         void store(Key key, std::size_t depth, Score score, Bound bound, Move best_move) noexcept;
 
     private:

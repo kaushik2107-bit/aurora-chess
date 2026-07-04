@@ -5,10 +5,14 @@
 #include "perft.hpp"
 #include "speed.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -60,6 +64,39 @@ namespace aurora::chess
             return text;
         }
 
+        [[nodiscard]] std::vector<std::string> split_words(std::string_view text)
+        {
+            std::istringstream stream{std::string{text}};
+            std::vector<std::string> words;
+            std::string word;
+            while (stream >> word)
+            {
+                words.push_back(word);
+            }
+            return words;
+        }
+
+        [[nodiscard]] std::optional<int> parse_int(std::string_view text)
+        {
+            std::istringstream stream{std::string{text}};
+            int value = 0;
+            stream >> value;
+            if (stream.fail())
+            {
+                return std::nullopt;
+            }
+            return value;
+        }
+
+        [[nodiscard]] std::optional<std::size_t> parse_size(std::string_view text)
+        {
+            if (const auto value = parse_int(text); value && *value >= 0)
+            {
+                return static_cast<std::size_t>(*value);
+            }
+            return std::nullopt;
+        }
+
         [[nodiscard]] std::uint64_t nodes_per_second(std::uint64_t nodes,
                                                      std::chrono::steady_clock::duration elapsed) noexcept
         {
@@ -108,10 +145,63 @@ namespace aurora::chess
             output << '\n' << std::flush;
         }
 
+        void print_board(std::ostream& output, const Board& board)
+        {
+            for (int rank = 7; rank >= 0; --rank)
+            {
+                output << rank + 1 << "  ";
+                for (int file = 0; file < 8; ++file)
+                {
+                    output << piece_to_char(board.piece_on(static_cast<Square>(rank * 8 + file))) << ' ';
+                }
+                output << '\n';
+            }
+            output << "\n   a b c d e f g h\n"
+                   << "Fen: " << board.fen() << '\n'
+                   << "Key: " << board.key() << '\n'
+                   << std::flush;
+        }
+
         struct PositionCommand
         {
             std::string fen;
             std::vector<std::string> moves;
+        };
+
+        enum class GoMode
+        {
+            Search,
+            Perft,
+            Speed,
+        };
+
+        struct GoCommand
+        {
+            GoMode mode{GoMode::Search};
+            std::size_t depth{4};
+            std::size_t quiescence_depth{8};
+            bool ponder{false};
+            bool infinite{false};
+            std::optional<int> white_time;
+            std::optional<int> black_time;
+            std::optional<int> white_increment;
+            std::optional<int> black_increment;
+            std::optional<int> moves_to_go;
+            std::optional<int> move_time;
+            std::optional<int> nodes;
+        };
+
+        struct SetOptionCommand
+        {
+            std::string name;
+            std::string value;
+        };
+
+        struct UciState
+        {
+            bool debug{false};
+            bool ponder{false};
+            std::size_t hash_mb{16};
         };
 
         [[nodiscard]] std::optional<PositionCommand> parse_position(std::string_view command)
@@ -163,6 +253,126 @@ namespace aurora::chess
             return position;
         }
 
+        [[nodiscard]] GoCommand parse_go(std::string_view command)
+        {
+            GoCommand go;
+            const auto words = split_words(command.substr(std::string_view{"go"}.size()));
+            for (std::size_t i = 0; i < words.size(); ++i)
+            {
+                const std::string& word = words[i];
+                auto next_size = [&]() -> std::optional<std::size_t>
+                {
+                    if (i + 1 >= words.size())
+                    {
+                        return std::nullopt;
+                    }
+                    ++i;
+                    return parse_size(words[i]);
+                };
+                auto next_int = [&]() -> std::optional<int>
+                {
+                    if (i + 1 >= words.size())
+                    {
+                        return std::nullopt;
+                    }
+                    ++i;
+                    return parse_int(words[i]);
+                };
+
+                if (word == "perft")
+                {
+                    go.mode = GoMode::Perft;
+                    if (const auto depth = next_size())
+                    {
+                        go.depth = *depth;
+                    }
+                }
+                else if (word == "speed")
+                {
+                    go.mode = GoMode::Speed;
+                    if (const auto depth = next_size())
+                    {
+                        go.depth = *depth;
+                    }
+                }
+                else if (word == "depth")
+                {
+                    if (const auto depth = next_size())
+                    {
+                        go.depth = *depth;
+                    }
+                }
+                else if (word == "wtime")
+                {
+                    go.white_time = next_int();
+                }
+                else if (word == "btime")
+                {
+                    go.black_time = next_int();
+                }
+                else if (word == "winc")
+                {
+                    go.white_increment = next_int();
+                }
+                else if (word == "binc")
+                {
+                    go.black_increment = next_int();
+                }
+                else if (word == "movestogo")
+                {
+                    go.moves_to_go = next_int();
+                }
+                else if (word == "movetime")
+                {
+                    go.move_time = next_int();
+                }
+                else if (word == "nodes")
+                {
+                    go.nodes = next_int();
+                }
+                else if (word == "ponder")
+                {
+                    go.ponder = true;
+                }
+                else if (word == "infinite")
+                {
+                    go.infinite = true;
+                }
+            }
+
+            go.depth = std::max<std::size_t>(1, go.depth);
+            return go;
+        }
+
+        [[nodiscard]] std::optional<SetOptionCommand> parse_setoption(std::string_view command)
+        {
+            std::string rest = trim(std::string{command.substr(std::string_view{"setoption"}.size())});
+            constexpr std::string_view name_prefix = "name ";
+            if (rest.rfind(name_prefix, 0) != 0)
+            {
+                return std::nullopt;
+            }
+
+            rest.erase(0, name_prefix.size());
+            const auto value_pos = rest.find(" value ");
+            SetOptionCommand option;
+            if (value_pos == std::string::npos)
+            {
+                option.name = trim(rest);
+            }
+            else
+            {
+                option.name = trim(rest.substr(0, value_pos));
+                option.value = trim(rest.substr(value_pos + std::string_view{" value "}.size()));
+            }
+
+            if (option.name.empty())
+            {
+                return std::nullopt;
+            }
+            return option;
+        }
+
         bool play_uci_move(Engine& engine, std::string_view move_text)
         {
             const auto moves = engine.legal_moves();
@@ -176,10 +386,109 @@ namespace aurora::chess
             return false;
         }
 
+        void print_uci(std::ostream& output, const Engine& engine, const UciState& state)
+        {
+            output << "id name " << engine.name() << '\n'
+                   << "id author Aurora\n"
+                   << "option name Hash type spin default " << state.hash_mb << " min 1 max 1024\n"
+                   << "option name Clear Hash type button\n"
+                   << "option name Ponder type check default false\n";
+            if (engine.nnue_loaded())
+            {
+                output << "info string NNUE evaluation using " << engine.nnue_path() << '\n';
+            }
+            else
+            {
+                output << "info string NNUE evaluation unavailable, using PSQT\n";
+            }
+            output << "uciok\n" << std::flush;
+        }
+
+        void apply_option(Engine& engine, UciState& state, const SetOptionCommand& option)
+        {
+            std::string name = option.name;
+            std::transform(name.begin(), name.end(), name.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+
+            if (name == "hash")
+            {
+                if (const auto hash = parse_size(option.value))
+                {
+                    state.hash_mb = std::clamp<std::size_t>(*hash, 1, 1024);
+                    engine.set_hash_size_mb(state.hash_mb);
+                }
+            }
+            else if (name == "clear hash")
+            {
+                engine.clear_hash();
+            }
+            else if (name == "ponder")
+            {
+                state.ponder = option.value == "true" || option.value == "1";
+            }
+        }
+
+        void run_perft_command(const Engine& engine, std::ostream& output, std::size_t depth)
+        {
+            if (depth == 0)
+            {
+                output << "\nNodes searched: 1\n";
+                return;
+            }
+
+            std::uint64_t nodes = 0;
+            const auto start = std::chrono::steady_clock::now();
+            Board board = engine.board();
+            const auto moves = MoveGenerator{}.generate(board);
+            for (const auto& entry : moves)
+            {
+                if (!board.make_move(entry.move))
+                {
+                    continue;
+                }
+
+                const auto count = depth == 1 ? 1 : perft(board, depth - 1);
+                output << move_to_uci(entry.move) << ": " << count << '\n' << std::flush;
+                nodes += count;
+                board.undo_move();
+            }
+            const auto elapsed = std::chrono::steady_clock::now() - start;
+            output << "\nNodes searched: " << nodes << '\n'
+                   << "NPS: " << nodes_per_second(nodes, elapsed) << '\n'
+                   << std::flush;
+        }
+
+        void run_speed_command(const Engine& engine, std::ostream& output, std::size_t depth)
+        {
+            print_speed_header(output);
+            std::uint64_t cumulative_nodes = 0;
+            const auto cumulative_start = std::chrono::steady_clock::now();
+            for (std::size_t current_depth = 1; current_depth <= depth; ++current_depth)
+            {
+                const auto stats = speed_stats_at_depth(engine.board(), current_depth);
+                cumulative_nodes += stats.nodes;
+                const auto elapsed = std::chrono::steady_clock::now() - cumulative_start;
+                print_speed_row(output, stats, nodes_per_second(cumulative_nodes, elapsed));
+            }
+        }
+
+        void run_search_command(Engine& engine, std::ostream& output, const GoCommand& go)
+        {
+            SearchLimits limits;
+            limits.depth = go.depth;
+            limits.quiescence_depth = go.quiescence_depth;
+            limits.on_iteration = [&output](const SearchIteration& iteration) { print_search_info(output, iteration); };
+
+            const auto result = engine.search(limits);
+            output << "bestmove " << (result.best_move == 0 ? "0000" : move_to_uci(result.best_move)) << '\n'
+                   << std::flush;
+        }
+
     } // namespace
 
     void run_uci_loop(Engine& engine, std::istream& input, std::ostream& output)
     {
+        UciState state;
         std::string line;
         while (std::getline(input, line))
         {
@@ -191,20 +500,26 @@ namespace aurora::chess
 
             if (command == "isready")
             {
-                output << "readyok\n";
+                output << "readyok\n" << std::flush;
             }
             else if (command == "uci")
             {
-                output << "id name " << engine.name() << "\nid author Aurora\n";
-                if (engine.nnue_loaded())
+                print_uci(output, engine, state);
+            }
+            else if (command == "ucinewgame")
+            {
+                engine.new_game();
+            }
+            else if (command.rfind("debug ", 0) == 0)
+            {
+                state.debug = command == "debug on";
+            }
+            else if (command.rfind("setoption ", 0) == 0)
+            {
+                if (const auto option = parse_setoption(command))
                 {
-                    output << "info string NNUE evaluation using " << engine.nnue_path() << '\n';
+                    apply_option(engine, state, *option);
                 }
-                else
-                {
-                    output << "info string NNUE evaluation unavailable, using PSQT\n";
-                }
-                output << "uciok\n";
             }
             else if (command.rfind("position ", 0) == 0)
             {
@@ -220,73 +535,33 @@ namespace aurora::chess
                     }
                 }
             }
-            else if (command.rfind("go perft ", 0) == 0)
+            else if (command == "d")
             {
-                const auto depth_text = command.substr(9);
-                std::istringstream input(depth_text);
-                std::size_t depth = 0;
-                input >> depth;
-
-                if (depth == 0)
-                {
-                    output << "\nNodes searched: 1\n";
-                    continue;
-                }
-
-                std::uint64_t nodes = 0;
-                const auto start = std::chrono::steady_clock::now();
-                Board board = engine.board();
-                const auto moves = MoveGenerator{}.generate(board);
-                for (const auto& entry : moves)
-                {
-                    if (!board.make_move(entry.move))
-                    {
-                        continue;
-                    }
-
-                    const auto count = depth == 1 ? 1 : perft(board, depth - 1);
-                    output << move_to_uci(entry.move) << ": " << count << '\n' << std::flush;
-                    nodes += count;
-                    board.undo_move();
-                }
-                const auto elapsed = std::chrono::steady_clock::now() - start;
-                output << "\nNodes searched: " << nodes << '\n'
-                       << "NPS: " << nodes_per_second(nodes, elapsed) << '\n'
-                       << std::flush;
+                print_board(output, engine.board());
             }
-            else if (command.rfind("go speed ", 0) == 0)
+            else if (command == "eval")
             {
-                const auto depth_text = command.substr(9);
-                std::istringstream input(depth_text);
-                std::size_t depth = 0;
-                input >> depth;
-
-                print_speed_header(output);
-                std::uint64_t cumulative_nodes = 0;
-                const auto cumulative_start = std::chrono::steady_clock::now();
-                for (std::size_t current_depth = 1; current_depth <= depth; ++current_depth)
+                output << "info string eval " << engine.evaluate() << '\n' << std::flush;
+            }
+            else if (command.rfind("go", 0) == 0 && (command.size() == 2 || std::isspace(command[2]) != 0))
+            {
+                const GoCommand go = parse_go(command);
+                switch (go.mode)
                 {
-                    const auto stats = speed_stats_at_depth(engine.board(), current_depth);
-                    cumulative_nodes += stats.nodes;
-                    const auto elapsed = std::chrono::steady_clock::now() - cumulative_start;
-                    print_speed_row(output, stats, nodes_per_second(cumulative_nodes, elapsed));
+                case GoMode::Perft:
+                    run_perft_command(engine, output, go.depth);
+                    break;
+                case GoMode::Speed:
+                    run_speed_command(engine, output, go.depth);
+                    break;
+                case GoMode::Search:
+                    run_search_command(engine, output, go);
+                    break;
                 }
             }
-            else if (command.rfind("go depth ", 0) == 0)
+            else if (command == "stop" || command == "ponderhit")
             {
-                const auto depth_text = command.substr(9);
-                std::istringstream input(depth_text);
-                std::size_t depth = 0;
-                input >> depth;
-
-                SearchLimits limits;
-                limits.depth = depth;
-                limits.on_iteration = [&output](const SearchIteration& iteration)
-                { print_search_info(output, iteration); };
-
-                const auto result = engine.search(limits);
-                output << "bestmove " << (result.best_move == 0 ? "0000" : move_to_uci(result.best_move)) << '\n'
-                       << std::flush;
+                // Search is synchronous today, so these commands are accepted as no-ops.
             }
             else if (command == "quit")
             {

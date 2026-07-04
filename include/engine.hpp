@@ -24,8 +24,12 @@ namespace aurora::chess
 
         void set_position(std::string_view fen);
         bool make_move(Move move);
+        void new_game();
+        void clear_hash();
+        void set_hash_size_mb(std::size_t megabytes);
         [[nodiscard]] const Board& board() const noexcept;
         [[nodiscard]] MoveList legal_moves() const;
+        [[nodiscard]] Score evaluate() const noexcept;
         [[nodiscard]] std::uint64_t perft(std::size_t depth) const;
         [[nodiscard]] SearchResult search(SearchLimits limits) const;
 
