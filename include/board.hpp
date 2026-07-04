@@ -318,23 +318,49 @@ namespace aurora::chess
         [[nodiscard]] Square en_passant_square() const noexcept;
         [[nodiscard]] std::uint32_t halfmove_clock() const noexcept;
         [[nodiscard]] std::uint32_t fullmove_number() const noexcept;
+        [[nodiscard]] Square king_square(Color color) const noexcept;
+        [[nodiscard]] Bitboard checkers() const noexcept;
+        [[nodiscard]] Bitboard pinned() const noexcept;
+        [[nodiscard]] Bitboard pinners() const noexcept;
 
+        [[nodiscard]] bool legal(Move move) const;
         bool make_move(Move move);
+        bool undo_move();
 
     private:
+        struct UndoState
+        {
+            Move move{0};
+            Piece moved{Piece::None};
+            Piece captured{Piece::None};
+            Square captured_square{Square::NoSquare};
+            CastlingRights castling_rights{CastlingRights::None};
+            Square en_passant_square{Square::NoSquare};
+            std::uint32_t halfmove_clock{0};
+            std::uint32_t fullmove_number{1};
+            Color side_to_move{Color::White};
+        };
+
         void clear();
         void set_piece(Piece piece, Square square);
+        void update_state() noexcept;
 
         std::array<Piece, 64> board_{};
         std::array<Bitboard, static_cast<std::size_t>(PieceType::Count)> pieces_{};
         std::array<Bitboard, 2> occupancy_{};
         Bitboard all_occupancy_{};
+        std::array<Square, 2> king_square_{Square::NoSquare, Square::NoSquare};
+        Bitboard checkers_{0};
+        Bitboard pinned_{0};
+        Bitboard pinners_{0};
 
         Color side_to_move_{Color::White};
         CastlingRights castling_rights_{CastlingRights::All};
         Square en_passant_square_{Square::NoSquare};
         std::uint32_t halfmove_clock_{0};
         std::uint32_t fullmove_number_{1};
+        std::array<UndoState, 256> history_{};
+        std::size_t history_size_{0};
     };
 
 } // namespace aurora::chess

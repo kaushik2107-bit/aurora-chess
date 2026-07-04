@@ -9,7 +9,7 @@ namespace aurora::chess
     namespace
     {
 
-        void collect_speed_stats(const Board &board, std::size_t depth, SpeedStats &stats)
+        void collect_speed_stats(Board &board, std::size_t depth, SpeedStats &stats)
         {
             const auto moves = MoveGenerator{}.generate(board);
             for (const auto &entry : moves)
@@ -19,15 +19,15 @@ namespace aurora::chess
                     continue;
                 }
 
-                Board next = board;
-                if (!next.make_move(entry.move))
+                if (!board.make_move(entry.move))
                 {
                     continue;
                 }
 
                 if (depth > 1)
                 {
-                    collect_speed_stats(next, depth - 1, stats);
+                    collect_speed_stats(board, depth - 1, stats);
+                    board.undo_move();
                     continue;
                 }
 
@@ -38,11 +38,12 @@ namespace aurora::chess
                 stats.castles += is_castle(flag) ? 1 : 0;
                 stats.promotions += is_promotion(flag) ? 1 : 0;
 
-                if (is_in_check(next, next.side_to_move()))
+                if (is_in_check(board, board.side_to_move()))
                 {
                     ++stats.checks;
-                    stats.checkmates += move_count(MoveGenerator{}.generate(next)) == 0 ? 1 : 0;
+                    stats.checkmates += move_count(MoveGenerator{}.generate(board)) == 0 ? 1 : 0;
                 }
+                board.undo_move();
             }
         }
 
@@ -52,7 +53,8 @@ namespace aurora::chess
     {
         SpeedStats stats;
         stats.depth = depth;
-        collect_speed_stats(board, depth, stats);
+        Board working = board;
+        collect_speed_stats(working, depth, stats);
         return stats;
     }
 

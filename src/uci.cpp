@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -79,7 +80,7 @@ namespace aurora::chess
                    << std::setw(12) << "Promotions"
                    << std::setw(10) << "Checks"
                    << std::setw(12) << "Checkmates"
-                   << std::setw(14) << "NPS" << '\n'
+                   << std::setw(14) << "Cum NPS" << '\n'
                    << std::flush;
         }
 
@@ -96,6 +97,39 @@ namespace aurora::chess
                    << std::setw(12) << stats.checkmates
                    << std::setw(14) << nps << '\n'
                    << std::flush;
+        }
+
+        [[nodiscard]] std::optional<std::string> position_fen(std::string_view command)
+        {
+            constexpr std::string_view prefix = "position ";
+            if (command.rfind(prefix, 0) != 0)
+            {
+                return std::nullopt;
+            }
+
+            std::string_view value = command.substr(prefix.size());
+            if (value == "startpos")
+            {
+                return std::string{kStartFen};
+            }
+
+            constexpr std::string_view fen_prefix = "fen ";
+            if (value.rfind(fen_prefix, 0) == 0)
+            {
+                value.remove_prefix(fen_prefix.size());
+            }
+
+            const auto moves_pos = value.find(" moves ");
+            if (moves_pos != std::string_view::npos)
+            {
+                value = value.substr(0, moves_pos);
+            }
+
+            if (value.empty())
+            {
+                return std::nullopt;
+            }
+            return std::string{value};
         }
 
     } // namespace
@@ -121,10 +155,9 @@ namespace aurora::chess
             }
             else if (command.rfind("position ", 0) == 0)
             {
-                const auto fen = command.substr(9);
-                if (!fen.empty())
+                if (const auto fen = position_fen(command))
                 {
-                    engine.set_position(fen);
+                    engine.set_position(*fen);
                 }
             }
             else if (command.rfind("go perft ", 0) == 0)
@@ -173,12 +206,14 @@ namespace aurora::chess
                 input >> depth;
 
                 print_speed_header(output);
+                std::uint64_t cumulative_nodes = 0;
+                const auto cumulative_start = std::chrono::steady_clock::now();
                 for (std::size_t current_depth = 1; current_depth <= depth; ++current_depth)
                 {
-                    const auto start = std::chrono::steady_clock::now();
                     const auto stats = speed_stats_at_depth(engine.board(), current_depth);
-                    const auto elapsed = std::chrono::steady_clock::now() - start;
-                    print_speed_row(output, stats, nodes_per_second(stats.nodes, elapsed));
+                    cumulative_nodes += stats.nodes;
+                    const auto elapsed = std::chrono::steady_clock::now() - cumulative_start;
+                    print_speed_row(output, stats, nodes_per_second(cumulative_nodes, elapsed));
                 }
             }
             else if (command == "quit")

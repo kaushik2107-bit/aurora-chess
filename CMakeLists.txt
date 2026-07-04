@@ -115,6 +115,7 @@ add_executable(aurora_chess_tests
     tests/test_movegen.cpp
     tests/test_perft.cpp
     tests/test_speed.cpp
+    tests/test_uci.cpp
 )
 
 target_link_libraries(aurora_chess_tests PRIVATE aurora_chess GTest::gtest_main)

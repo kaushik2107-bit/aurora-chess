@@ -313,53 +313,27 @@ namespace aurora::chess
         return bishop_attacks(square, occupancy) | rook_attacks(square, occupancy);
     }
 
+    Bitboard attackers_to(const Board& board, Square square, Bitboard occupancy, Color by)
+    {
+        const Bitboard by_occupancy = board.occupancy(by) & occupancy;
+        return (pawn_attacks(square, ~by) & board.piece_bb(PieceType::Pawn) & by_occupancy) |
+               (knight_attacks(square) & board.piece_bb(PieceType::Knight) & by_occupancy) |
+               (bishop_attacks(square, occupancy) &
+                (board.piece_bb(PieceType::Bishop) | board.piece_bb(PieceType::Queen)) & by_occupancy) |
+               (rook_attacks(square, occupancy) &
+                (board.piece_bb(PieceType::Rook) | board.piece_bb(PieceType::Queen)) & by_occupancy) |
+               (king_attacks(square) & board.piece_bb(PieceType::King) & by_occupancy);
+    }
+
     bool is_square_attacked(const Board& board, Square square, Color by)
     {
-        const Bitboard target = bit(square);
-        const Bitboard by_occupancy = board.occupancy(by);
-
-        const Bitboard pawn_attackers = board.piece_bb(PieceType::Pawn) & by_occupancy;
-        const Bitboard pawn_attacks = by == Color::White
-                                          ? ((pawn_attackers & ~kFileA) << 7) | ((pawn_attackers & ~kFileH) << 9)
-                                          : ((pawn_attackers & ~kFileA) >> 9) | ((pawn_attackers & ~kFileH) >> 7);
-        if ((pawn_attacks & target) != 0)
-        {
-            return true;
-        }
-
-        Bitboard knights = board.piece_bb(PieceType::Knight) & by_occupancy;
-        while (knights)
-        {
-            const auto from = static_cast<Square>(lsb_index(knights));
-            if ((knight_attacks(from) & target) != 0)
-            {
-                return true;
-            }
-            knights &= knights - 1;
-        }
-
-        const Bitboard bishops_and_queens =
-            (board.piece_bb(PieceType::Bishop) | board.piece_bb(PieceType::Queen)) & by_occupancy;
-        if ((bishop_attacks(square, board.all_occupancy()) & bishops_and_queens) != 0)
-        {
-            return true;
-        }
-
-        const Bitboard rooks_and_queens =
-            (board.piece_bb(PieceType::Rook) | board.piece_bb(PieceType::Queen)) & by_occupancy;
-        if ((rook_attacks(square, board.all_occupancy()) & rooks_and_queens) != 0)
-        {
-            return true;
-        }
-
-        const Bitboard kings = board.piece_bb(PieceType::King) & by_occupancy;
-        return kings != 0 && (king_attacks(static_cast<Square>(lsb_index(kings))) & target) != 0;
+        return attackers_to(board, square, board.all_occupancy(), by) != 0;
     }
 
     bool is_in_check(const Board& board, Color color)
     {
-        const Bitboard king = board.piece_bb(PieceType::King) & board.occupancy(color);
-        return king != 0 && is_square_attacked(board, static_cast<Square>(lsb_index(king)), ~color);
+        const Square king = board.king_square(color);
+        return king != Square::NoSquare && is_square_attacked(board, king, ~color);
     }
 
 } // namespace aurora::chess

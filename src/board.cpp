@@ -1,8 +1,11 @@
 #include "board.hpp"
 
+#include "attacks.hpp"
+#include "bitboard.hpp"
 #include "helpers.hpp"
 
 #include <cctype>
+#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 
@@ -102,6 +105,52 @@ namespace aurora::chess
             return name;
         }
 
+        constexpr int sign(int value) noexcept
+        {
+            return (value > 0) - (value < 0);
+        }
+
+        constexpr bool is_orthogonal(int file_step, int rank_step) noexcept
+        {
+            return file_step == 0 || rank_step == 0;
+        }
+
+        bool slider_matches_ray(Piece piece, int file_step, int rank_step) noexcept
+        {
+            const auto type = piece_type(piece);
+            if (type == PieceType::Queen)
+            {
+                return true;
+            }
+            return is_orthogonal(file_step, rank_step) ? type == PieceType::Rook : type == PieceType::Bishop;
+        }
+
+        bool aligned(Square a, Square b, Square c) noexcept
+        {
+            const int af = file_of(a);
+            const int ar = rank_of(a);
+            const int bf = file_of(b);
+            const int br = rank_of(b);
+            const int cf = file_of(c);
+            const int cr = rank_of(c);
+
+            const int abf = bf - af;
+            const int abr = br - ar;
+            const int acf = cf - af;
+            const int acr = cr - ar;
+
+            if (abf == 0)
+            {
+                return acf == 0;
+            }
+            if (abr == 0)
+            {
+                return acr == 0;
+            }
+            return std::abs(abf) == std::abs(abr) && std::abs(acf) == std::abs(acr) &&
+                   sign(abf) == sign(acf) && sign(abr) == sign(acr);
+        }
+
     } // namespace
 
     Board::Board(std::string_view fen)
@@ -115,11 +164,16 @@ namespace aurora::chess
         pieces_.fill(0);
         occupancy_.fill(0);
         all_occupancy_ = 0;
+        king_square_ = {Square::NoSquare, Square::NoSquare};
+        checkers_ = 0;
+        pinned_ = 0;
+        pinners_ = 0;
         side_to_move_ = Color::White;
         castling_rights_ = CastlingRights::All;
         en_passant_square_ = Square::NoSquare;
         halfmove_clock_ = 0;
         fullmove_number_ = 1;
+        history_size_ = 0;
     }
 
     void Board::set_piece(Piece piece, Square square)
@@ -132,6 +186,10 @@ namespace aurora::chess
             pieces_[static_cast<std::size_t>(previous_type)] &= ~bit(square);
             occupancy_[static_cast<std::size_t>(piece_color(previous))] &= ~bit(square);
             all_occupancy_ &= ~bit(square);
+            if (previous_type == PieceType::King)
+            {
+                king_square_[static_cast<std::size_t>(piece_color(previous))] = Square::NoSquare;
+            }
         }
 
         board_[idx] = piece;
@@ -141,6 +199,10 @@ namespace aurora::chess
             pieces_[static_cast<std::size_t>(type)] |= bit(square);
             occupancy_[static_cast<std::size_t>(piece_color(piece))] |= bit(square);
             all_occupancy_ |= bit(square);
+            if (type == PieceType::King)
+            {
+                king_square_[static_cast<std::size_t>(piece_color(piece))] = square;
+            }
         }
     }
 
@@ -221,6 +283,7 @@ namespace aurora::chess
 
         halfmove_clock_ = static_cast<std::uint32_t>(std::stoul(halfmove_part));
         fullmove_number_ = static_cast<std::uint32_t>(std::stoul(fullmove_part));
+        update_state();
     }
 
     std::string Board::fen() const
@@ -335,6 +398,136 @@ namespace aurora::chess
         return fullmove_number_;
     }
 
+    Square Board::king_square(Color color) const noexcept
+    {
+        return king_square_[static_cast<std::size_t>(color)];
+    }
+
+    Bitboard Board::checkers() const noexcept
+    {
+        return checkers_;
+    }
+
+    Bitboard Board::pinned() const noexcept
+    {
+        return pinned_;
+    }
+
+    Bitboard Board::pinners() const noexcept
+    {
+        return pinners_;
+    }
+
+    void Board::update_state() noexcept
+    {
+        checkers_ = 0;
+        pinned_ = 0;
+        pinners_ = 0;
+
+        const Square king = king_square(side_to_move_);
+        if (king == Square::NoSquare)
+        {
+            return;
+        }
+
+        checkers_ = attackers_to(*this, king, all_occupancy_, ~side_to_move_);
+
+        constexpr std::array<std::array<int, 2>, 8> directions{{
+            {1, 0},
+            {-1, 0},
+            {0, 1},
+            {0, -1},
+            {1, 1},
+            {1, -1},
+            {-1, 1},
+            {-1, -1},
+        }};
+
+        const int king_file = file_of(king);
+        const int king_rank = rank_of(king);
+        for (const auto &direction : directions)
+        {
+            const int file_step = direction[0];
+            const int rank_step = direction[1];
+            Square blocker = Square::NoSquare;
+
+            for (int file = king_file + file_step, rank = king_rank + rank_step;
+                 on_board(file, rank);
+                 file += file_step, rank += rank_step)
+            {
+                const Square square = to_square(file, rank);
+                const Bitboard square_bb = bit(square);
+
+                if ((occupancy(side_to_move_) & square_bb) != 0)
+                {
+                    if (blocker != Square::NoSquare)
+                    {
+                        break;
+                    }
+                    blocker = square;
+                    continue;
+                }
+
+                if ((occupancy(~side_to_move_) & square_bb) != 0)
+                {
+                    if (blocker != Square::NoSquare && slider_matches_ray(piece_on(square), file_step, rank_step))
+                    {
+                        pinned_ |= bit(blocker);
+                        pinners_ |= square_bb;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    bool Board::legal(Move move) const
+    {
+        const auto from = move_from(move);
+        const auto to = move_to(move);
+        const auto flag = move_flag(move);
+        const auto moving = piece_on(from);
+        if (moving == Piece::None || piece_color(moving) != side_to_move_)
+        {
+            return false;
+        }
+
+        const auto us = side_to_move_;
+        const auto them = ~us;
+        const Square king = king_square(us);
+
+        if (flag == MoveFlag::EnPassant)
+        {
+            const auto captured_square = static_cast<Square>(static_cast<int>(to) + (us == Color::White ? -8 : 8));
+            const Bitboard occupancy_after = (all_occupancy_ & ~bit(from) & ~bit(captured_square)) | bit(to);
+            return (attackers_to(*this, king, occupancy_after, them) &
+                    ((pieces_[static_cast<std::size_t>(PieceType::Bishop)] | pieces_[static_cast<std::size_t>(PieceType::Rook)] |
+                      pieces_[static_cast<std::size_t>(PieceType::Queen)]) &
+                     occupancy_[static_cast<std::size_t>(them)])) == 0;
+        }
+
+        if (is_castle(flag))
+        {
+            const int step = to > from ? 1 : -1;
+            for (int square = static_cast<int>(from); square != static_cast<int>(to) + step; square += step)
+            {
+                if (attackers_to(*this, static_cast<Square>(square), all_occupancy_, them) != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (piece_type(moving) == PieceType::King)
+        {
+            const Bitboard occupancy_after = (all_occupancy_ & ~bit(from)) & ~bit(to);
+            return attackers_to(*this, to, occupancy_after, them) == 0;
+        }
+
+        return (pinned_ & bit(from)) == 0 || aligned(king, from, to);
+    }
+
     bool Board::make_move(Move move)
     {
         const auto from = move_from(move);
@@ -357,6 +550,12 @@ namespace aurora::chess
         {
             return false;
         }
+
+        const auto captured_square = flag == MoveFlag::EnPassant
+                                         ? static_cast<Square>(static_cast<int>(to) + (us == Color::White ? -8 : 8))
+                                         : to;
+        history_[history_size_++] = UndoState{move, moving, captured, captured_square, castling_rights_,
+                                              en_passant_square_, halfmove_clock_, fullmove_number_, side_to_move_};
 
         if (moving_type == PieceType::King)
         {
@@ -460,6 +659,54 @@ namespace aurora::chess
             ++fullmove_number_;
         }
         side_to_move_ = them;
+        update_state();
+        return true;
+    }
+
+    bool Board::undo_move()
+    {
+        if (history_size_ == 0)
+        {
+            return false;
+        }
+
+        const UndoState state = history_[--history_size_];
+        const Square from = move_from(state.move);
+        const Square to = move_to(state.move);
+        const MoveFlag flag = move_flag(state.move);
+
+        if (is_castle(flag))
+        {
+            if (flag == MoveFlag::KingCastle)
+            {
+                const Square rook_from = state.side_to_move == Color::White ? Square::H1 : Square::H8;
+                const Square rook_to = state.side_to_move == Color::White ? Square::F1 : Square::F8;
+                set_piece(Piece::None, rook_to);
+                set_piece(state.side_to_move == Color::White ? Piece::WhiteRook : Piece::BlackRook, rook_from);
+            }
+            else
+            {
+                const Square rook_from = state.side_to_move == Color::White ? Square::A1 : Square::A8;
+                const Square rook_to = state.side_to_move == Color::White ? Square::D1 : Square::D8;
+                set_piece(Piece::None, rook_to);
+                set_piece(state.side_to_move == Color::White ? Piece::WhiteRook : Piece::BlackRook, rook_from);
+            }
+        }
+
+        set_piece(Piece::None, to);
+        set_piece(state.moved, from);
+
+        if (state.captured != Piece::None)
+        {
+            set_piece(state.captured, state.captured_square);
+        }
+
+        castling_rights_ = state.castling_rights;
+        en_passant_square_ = state.en_passant_square;
+        halfmove_clock_ = state.halfmove_clock;
+        fullmove_number_ = state.fullmove_number;
+        side_to_move_ = state.side_to_move;
+        update_state();
         return true;
     }
 
