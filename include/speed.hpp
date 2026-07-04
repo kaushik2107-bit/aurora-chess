@@ -21,6 +21,7 @@ namespace aurora::chess
         std::uint64_t checkmates{0};
     };
 
+    [[nodiscard]] SpeedStats speed_stats_at_depth(const Board &board, std::size_t depth);
     [[nodiscard]] std::vector<SpeedStats> speed_stats(const Board &board, std::size_t max_depth);
 
 } // namespace aurora::chess

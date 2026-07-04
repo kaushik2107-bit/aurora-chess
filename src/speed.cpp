@@ -48,6 +48,14 @@ namespace aurora::chess
 
     } // namespace
 
+    SpeedStats speed_stats_at_depth(const Board &board, std::size_t depth)
+    {
+        SpeedStats stats;
+        stats.depth = depth;
+        collect_speed_stats(board, depth, stats);
+        return stats;
+    }
+
     std::vector<SpeedStats> speed_stats(const Board &board, std::size_t max_depth)
     {
         std::vector<SpeedStats> result;
@@ -55,10 +63,7 @@ namespace aurora::chess
 
         for (std::size_t depth = 1; depth <= max_depth; ++depth)
         {
-            SpeedStats stats;
-            stats.depth = depth;
-            collect_speed_stats(board, depth, stats);
-            result.push_back(stats);
+            result.push_back(speed_stats_at_depth(board, depth));
         }
 
         return result;
