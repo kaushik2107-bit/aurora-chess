@@ -87,6 +87,94 @@ namespace aurora::chess
             return static_cast<Square>(index);
         }
 
+        constexpr CastlingRights remove_castling(CastlingRights rights, CastlingRights flag) noexcept
+        {
+            return static_cast<CastlingRights>(static_cast<int>(rights) & ~static_cast<int>(flag));
+        }
+
+        constexpr Piece make_piece(Color color, PieceType type) noexcept
+        {
+            if (color == Color::White)
+            {
+                switch (type)
+                {
+                case PieceType::Pawn:
+                    return Piece::WhitePawn;
+                case PieceType::Knight:
+                    return Piece::WhiteKnight;
+                case PieceType::Bishop:
+                    return Piece::WhiteBishop;
+                case PieceType::Rook:
+                    return Piece::WhiteRook;
+                case PieceType::Queen:
+                    return Piece::WhiteQueen;
+                case PieceType::King:
+                    return Piece::WhiteKing;
+                default:
+                    return Piece::None;
+                }
+            }
+
+            switch (type)
+            {
+            case PieceType::Pawn:
+                return Piece::BlackPawn;
+            case PieceType::Knight:
+                return Piece::BlackKnight;
+            case PieceType::Bishop:
+                return Piece::BlackBishop;
+            case PieceType::Rook:
+                return Piece::BlackRook;
+            case PieceType::Queen:
+                return Piece::BlackQueen;
+            case PieceType::King:
+                return Piece::BlackKing;
+            default:
+                return Piece::None;
+            }
+        }
+
+        constexpr PieceType promotion_type(MoveFlag flag) noexcept
+        {
+            switch (flag)
+            {
+            case MoveFlag::KnightPromotion:
+            case MoveFlag::KnightPromotionCapture:
+                return PieceType::Knight;
+            case MoveFlag::BishopPromotion:
+            case MoveFlag::BishopPromotionCapture:
+                return PieceType::Bishop;
+            case MoveFlag::RookPromotion:
+            case MoveFlag::RookPromotionCapture:
+                return PieceType::Rook;
+            case MoveFlag::QueenPromotion:
+            case MoveFlag::QueenPromotionCapture:
+                return PieceType::Queen;
+            default:
+                return PieceType::Count;
+            }
+        }
+
+        constexpr bool is_capture_flag(MoveFlag flag) noexcept
+        {
+            return flag == MoveFlag::Capture || flag == MoveFlag::EnPassant ||
+                   flag == MoveFlag::KnightPromotionCapture || flag == MoveFlag::BishopPromotionCapture ||
+                   flag == MoveFlag::RookPromotionCapture || flag == MoveFlag::QueenPromotionCapture;
+        }
+
+        std::string square_name(Square square)
+        {
+            if (square == Square::NoSquare)
+            {
+                return "-";
+            }
+            const auto index = square_index(square);
+            std::string name;
+            name.push_back(static_cast<char>('a' + (index % 8)));
+            name.push_back(static_cast<char>('1' + (index / 8)));
+            return name;
+        }
+
     } // namespace
 
     Board::Board(std::string_view fen)
@@ -191,7 +279,18 @@ namespace aurora::chess
             }
         }
 
-        en_passant_square_ = ep_part == "-" ? Square::NoSquare : static_cast<Square>(std::stoi(ep_part.substr(1)) + (ep_part[0] - 'a'));
+        if (ep_part == "-")
+        {
+            en_passant_square_ = Square::NoSquare;
+        }
+        else if (ep_part.size() == 2 && ep_part[0] >= 'a' && ep_part[0] <= 'h' && ep_part[1] >= '1' && ep_part[1] <= '8')
+        {
+            en_passant_square_ = static_cast<Square>((ep_part[1] - '1') * 8 + (ep_part[0] - 'a'));
+        }
+        else
+        {
+            throw std::invalid_argument("invalid en passant square");
+        }
 
         halfmove_clock_ = static_cast<std::uint32_t>(std::stoul(halfmove_part));
         fullmove_number_ = static_cast<std::uint32_t>(std::stoul(fullmove_part));
@@ -254,7 +353,7 @@ namespace aurora::chess
                 stream << 'q';
             }
         }
-        stream << ' ' << (en_passant_square_ == Square::NoSquare ? "-" : "e3") << ' ';
+        stream << ' ' << square_name(en_passant_square_) << ' ';
         stream << halfmove_clock_ << ' ' << fullmove_number_;
         return stream.str();
     }
@@ -307,6 +406,134 @@ namespace aurora::chess
     std::uint32_t Board::fullmove_number() const noexcept
     {
         return fullmove_number_;
+    }
+
+    bool Board::make_move(Move move)
+    {
+        const auto from = move_from(move);
+        const auto to = move_to(move);
+        const auto flag = move_flag(move);
+        const auto moving = piece_on(from);
+        if (moving == Piece::None || piece_color(moving) != side_to_move_)
+        {
+            return false;
+        }
+
+        const auto us = side_to_move_;
+        const auto them = ~us;
+        const auto moving_type = piece_type(moving);
+        const auto captured = flag == MoveFlag::EnPassant
+                                  ? piece_on(static_cast<Square>(static_cast<int>(to) + (us == Color::White ? -8 : 8)))
+                                  : piece_on(to);
+
+        if (captured != Piece::None && piece_color(captured) == us)
+        {
+            return false;
+        }
+
+        if (moving_type == PieceType::King)
+        {
+            if (us == Color::White)
+            {
+                castling_rights_ = remove_castling(remove_castling(castling_rights_, CastlingRights::WhiteKingSide), CastlingRights::WhiteQueenSide);
+            }
+            else
+            {
+                castling_rights_ = remove_castling(remove_castling(castling_rights_, CastlingRights::BlackKingSide), CastlingRights::BlackQueenSide);
+            }
+        }
+        else if (moving_type == PieceType::Rook)
+        {
+            if (from == Square::A1)
+            {
+                castling_rights_ = remove_castling(castling_rights_, CastlingRights::WhiteQueenSide);
+            }
+            else if (from == Square::H1)
+            {
+                castling_rights_ = remove_castling(castling_rights_, CastlingRights::WhiteKingSide);
+            }
+            else if (from == Square::A8)
+            {
+                castling_rights_ = remove_castling(castling_rights_, CastlingRights::BlackQueenSide);
+            }
+            else if (from == Square::H8)
+            {
+                castling_rights_ = remove_castling(castling_rights_, CastlingRights::BlackKingSide);
+            }
+        }
+
+        if (to == Square::A1)
+        {
+            castling_rights_ = remove_castling(castling_rights_, CastlingRights::WhiteQueenSide);
+        }
+        else if (to == Square::H1)
+        {
+            castling_rights_ = remove_castling(castling_rights_, CastlingRights::WhiteKingSide);
+        }
+        else if (to == Square::A8)
+        {
+            castling_rights_ = remove_castling(castling_rights_, CastlingRights::BlackQueenSide);
+        }
+        else if (to == Square::H8)
+        {
+            castling_rights_ = remove_castling(castling_rights_, CastlingRights::BlackKingSide);
+        }
+
+        set_piece(Piece::None, from);
+
+        if (flag == MoveFlag::EnPassant)
+        {
+            const auto captured_square = static_cast<Square>(static_cast<int>(to) + (us == Color::White ? -8 : 8));
+            set_piece(Piece::None, captured_square);
+        }
+
+        Piece placed = moving;
+        if (is_promotion(flag))
+        {
+            placed = make_piece(us, promotion_type(flag));
+        }
+        set_piece(placed, to);
+
+        if (flag == MoveFlag::KingCastle)
+        {
+            if (us == Color::White)
+            {
+                set_piece(Piece::None, Square::H1);
+                set_piece(Piece::WhiteRook, Square::F1);
+            }
+            else
+            {
+                set_piece(Piece::None, Square::H8);
+                set_piece(Piece::BlackRook, Square::F8);
+            }
+        }
+        else if (flag == MoveFlag::QueenCastle)
+        {
+            if (us == Color::White)
+            {
+                set_piece(Piece::None, Square::A1);
+                set_piece(Piece::WhiteRook, Square::D1);
+            }
+            else
+            {
+                set_piece(Piece::None, Square::A8);
+                set_piece(Piece::BlackRook, Square::D8);
+            }
+        }
+
+        en_passant_square_ = Square::NoSquare;
+        if (flag == MoveFlag::DoublePawnPush)
+        {
+            en_passant_square_ = static_cast<Square>((static_cast<int>(from) + static_cast<int>(to)) / 2);
+        }
+
+        halfmove_clock_ = moving_type == PieceType::Pawn || is_capture_flag(flag) || captured != Piece::None ? 0 : halfmove_clock_ + 1;
+        if (us == Color::Black)
+        {
+            ++fullmove_number_;
+        }
+        side_to_move_ = them;
+        return true;
     }
 
 } // namespace aurora::chess

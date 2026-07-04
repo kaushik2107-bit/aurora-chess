@@ -18,8 +18,12 @@ FetchContent_MakeAvailable(googletest)
 
 add_library(aurora_chess STATIC
     src/engine.cpp
+    src/uci.cpp
+    src/attacks.cpp
     src/board.cpp
     src/movegen.cpp
+    src/perft.cpp
+    src/speed.cpp
     src/magic.cpp
 )
 
@@ -49,6 +53,7 @@ add_executable(aurora_chess_tests
     tests/test_magic.cpp
     tests/test_movegen.cpp
     tests/test_perft.cpp
+    tests/test_speed.cpp
 )
 
 target_link_libraries(aurora_chess_tests PRIVATE aurora_chess GTest::gtest_main)

@@ -1,8 +1,7 @@
 #include "movegen.hpp"
 
-#include "magic.hpp"
+#include "attacks.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -12,209 +11,18 @@ namespace aurora::chess
     namespace
     {
 
-        constexpr std::array<int, 64> kSquareToFile = {
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-        };
-
-        constexpr std::array<int, 64> kSquareToRank = {
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            1,
-            1,
-            1,
-            1,
-            1,
-            1,
-            1,
-            2,
-            2,
-            2,
-            2,
-            2,
-            2,
-            2,
-            2,
-            3,
-            3,
-            3,
-            3,
-            3,
-            3,
-            3,
-            3,
-            4,
-            4,
-            4,
-            4,
-            4,
-            4,
-            4,
-            4,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            6,
-            6,
-            6,
-            6,
-            6,
-            6,
-            6,
-            6,
-            7,
-            7,
-            7,
-            7,
-            7,
-            7,
-            7,
-            7,
-        };
-
-        constexpr std::array<int, 64> kSquareToRow = {
-            7,
-            7,
-            7,
-            7,
-            7,
-            7,
-            7,
-            7,
-            6,
-            6,
-            6,
-            6,
-            6,
-            6,
-            6,
-            6,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            4,
-            4,
-            4,
-            4,
-            4,
-            4,
-            4,
-            4,
-            3,
-            3,
-            3,
-            3,
-            3,
-            3,
-            3,
-            3,
-            2,
-            2,
-            2,
-            2,
-            2,
-            2,
-            2,
-            2,
-            1,
-            1,
-            1,
-            1,
-            1,
-            1,
-            1,
-            1,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        };
-
         constexpr Bitboard kFileA = 0x0101010101010101ull;
         constexpr Bitboard kFileH = 0x8080808080808080ull;
+
+        constexpr int file_of(Square square) noexcept
+        {
+            return static_cast<int>(square) & 7;
+        }
+
+        constexpr int rank_of(Square square) noexcept
+        {
+            return static_cast<int>(square) >> 3;
+        }
 
         constexpr bool on_board(int file, int rank) noexcept
         {
@@ -226,70 +34,17 @@ namespace aurora::chess
             return static_cast<Square>(rank * 8 + file);
         }
 
-        constexpr Square to_square(std::size_t index) noexcept
+        constexpr bool has_castling(CastlingRights rights, CastlingRights flag) noexcept
         {
-            return static_cast<Square>(index);
+            return (static_cast<int>(rights) & static_cast<int>(flag)) != 0;
         }
 
-        [[nodiscard]] constexpr std::uint8_t square_index(Square square) noexcept
+        void add_promotions(std::array<MoveEntry, 256> &out, std::size_t &count, Square from, Square to, bool capture)
         {
-            return static_cast<std::uint8_t>(square);
-        }
-
-        [[nodiscard]] Bitboard pawn_moves(Bitboard pawns, Color color) noexcept
-        {
-            if (color == Color::White)
-            {
-                return (pawns << 8) & ~0xFF00000000000000ull;
-            }
-            return (pawns >> 8) & ~0x00000000000000FFull;
-        }
-
-        [[nodiscard]] Bitboard pawn_captures(Bitboard pawns, Color color, Bitboard occupancy) noexcept
-        {
-            if (color == Color::White)
-            {
-                const Bitboard left = ((pawns & ~kFileA) << 7) & ~0xFF00000000000000ull;
-                const Bitboard right = ((pawns & ~kFileH) << 9) & ~0xFF00000000000000ull;
-                return (left | right) & occupancy;
-            }
-            const Bitboard left = ((pawns & ~kFileA) >> 9) & ~0x00000000000000FFull;
-            const Bitboard right = ((pawns & ~kFileH) >> 7) & ~0x00000000000000FFull;
-            return (left | right) & occupancy;
-        }
-
-        [[nodiscard]] Bitboard knight_moves(Square square) noexcept
-        {
-            const auto idx = square_index(square);
-            Bitboard result = 0;
-            const int file = kSquareToFile[idx];
-            const int rank = kSquareToRank[idx];
-            constexpr std::array<std::array<int, 2>, 8> deltas{{{1, 2}, {2, 1}, {2, -1}, {1, -2}, {-1, -2}, {-2, -1}, {-2, 1}, {-1, 2}}};
-            for (const auto &[df, dr] : deltas)
-            {
-                if (on_board(file + df, rank + dr))
-                {
-                    result |= bit(to_square(file + df, rank + dr));
-                }
-            }
-            return result;
-        }
-
-        [[nodiscard]] Bitboard king_moves(Square square) noexcept
-        {
-            const auto idx = square_index(square);
-            Bitboard result = 0;
-            const int file = kSquareToFile[idx];
-            const int rank = kSquareToRank[idx];
-            constexpr std::array<std::array<int, 2>, 8> deltas{{{1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}, {0, 1}}};
-            for (const auto &[df, dr] : deltas)
-            {
-                if (on_board(file + df, rank + dr))
-                {
-                    result |= bit(to_square(file + df, rank + dr));
-                }
-            }
-            return result;
+            out[count++] = MoveEntry{make_move(from, to, capture ? MoveFlag::KnightPromotionCapture : MoveFlag::KnightPromotion), 0};
+            out[count++] = MoveEntry{make_move(from, to, capture ? MoveFlag::BishopPromotionCapture : MoveFlag::BishopPromotion), 0};
+            out[count++] = MoveEntry{make_move(from, to, capture ? MoveFlag::RookPromotionCapture : MoveFlag::RookPromotion), 0};
+            out[count++] = MoveEntry{make_move(from, to, capture ? MoveFlag::QueenPromotionCapture : MoveFlag::QueenPromotion), 0};
         }
 
     } // namespace
@@ -302,57 +57,115 @@ namespace aurora::chess
 
     std::array<MoveEntry, 256> MoveGenerator::generate(const Board &board)
     {
-        MagicBitboards::init();
-
-        std::array<MoveEntry, 256> moves{};
-        std::size_t count = 0;
+        std::array<MoveEntry, 256> pseudo{};
+        std::size_t pseudo_count = 0;
 
         const auto us = board.side_to_move();
 
-        generate_pawn_moves(board, moves, count, us);
-        generate_knight_moves(board, moves, count, us);
-        generate_bishop_moves(board, moves, count, us);
-        generate_rook_moves(board, moves, count, us);
-        generate_queen_moves(board, moves, count, us);
-        generate_king_moves(board, moves, count, us);
+        generate_pawn_moves(board, pseudo, pseudo_count, us);
+        generate_knight_moves(board, pseudo, pseudo_count, us);
+        generate_bishop_moves(board, pseudo, pseudo_count, us);
+        generate_rook_moves(board, pseudo, pseudo_count, us);
+        generate_queen_moves(board, pseudo, pseudo_count, us);
+        generate_king_moves(board, pseudo, pseudo_count, us);
 
-        return moves;
+        std::array<MoveEntry, 256> legal{};
+        std::size_t legal_count = 0;
+        for (std::size_t i = 0; i < pseudo_count; ++i)
+        {
+            Board next = board;
+            if (next.make_move(pseudo[i].move) && !is_in_check(next, us))
+            {
+                legal[legal_count++] = pseudo[i];
+            }
+        }
+        return legal;
     }
 
     void MoveGenerator::generate_pawn_moves(const Board &board, std::array<MoveEntry, 256> &moves, std::size_t &count, Color us) const
     {
         Bitboard pawns = board.piece_bb(PieceType::Pawn) & board.occupancy(us);
-        const auto occupancy = board.all_occupancy();
+        const Bitboard enemies = board.occupancy(~us);
+        const auto ep = board.en_passant_square();
+
         while (pawns)
         {
-            const auto lsb = pawns & -pawns;
-            const auto sq = static_cast<Square>(std::countr_zero(lsb));
-            const auto target = us == Color::White ? static_cast<Square>(static_cast<int>(sq) + 8) : static_cast<Square>(static_cast<int>(sq) - 8);
-            if (target != Square::NoSquare && board.is_empty(target))
+            const auto from = static_cast<Square>(lsb_index(pawns));
+            const int file = file_of(from);
+            const int rank = rank_of(from);
+            const int forward = us == Color::White ? 1 : -1;
+            const int start_rank = us == Color::White ? 1 : 6;
+            const int promotion_rank = us == Color::White ? 6 : 1;
+
+            const int one_rank = rank + forward;
+            if (on_board(file, one_rank))
             {
-                static_cast<void>(add_move(moves, count, static_cast<Move>(static_cast<std::uint16_t>(sq) | (static_cast<std::uint16_t>(target) << 6))));
+                const auto one = to_square(file, one_rank);
+                if (board.is_empty(one))
+                {
+                    if (rank == promotion_rank)
+                    {
+                        add_promotions(moves, count, from, one, false);
+                    }
+                    else
+                    {
+                        static_cast<void>(add_move(moves, count, make_move(from, one)));
+                        const int two_rank = rank + forward * 2;
+                        const auto two = to_square(file, two_rank);
+                        if (rank == start_rank && board.is_empty(two))
+                        {
+                            static_cast<void>(add_move(moves, count, make_move(from, two, MoveFlag::DoublePawnPush)));
+                        }
+                    }
+                }
             }
+
+            for (const int df : {-1, 1})
+            {
+                const int target_file = file + df;
+                const int target_rank = rank + forward;
+                if (!on_board(target_file, target_rank))
+                {
+                    continue;
+                }
+
+                const auto to = to_square(target_file, target_rank);
+                const bool capture = (bit(to) & enemies) != 0;
+                if (capture)
+                {
+                    if (rank == promotion_rank)
+                    {
+                        add_promotions(moves, count, from, to, true);
+                    }
+                    else
+                    {
+                        static_cast<void>(add_move(moves, count, make_move(from, to, MoveFlag::Capture)));
+                    }
+                }
+                else if (to == ep)
+                {
+                    static_cast<void>(add_move(moves, count, make_move(from, to, MoveFlag::EnPassant)));
+                }
+            }
+
             pawns &= pawns - 1;
         }
-        (void)occupancy;
     }
 
     void MoveGenerator::generate_knight_moves(const Board &board, std::array<MoveEntry, 256> &moves, std::size_t &count, Color us) const
     {
         Bitboard our_knights = board.piece_bb(PieceType::Knight) & board.occupancy(us);
         const auto friendly = board.occupancy(us);
+        const auto enemies = board.occupancy(~us);
         while (our_knights)
         {
-            const auto lsb = our_knights & -our_knights;
-            const auto sq = static_cast<Square>(std::countr_zero(lsb));
-            const auto moves_bb = knight_moves(sq) & ~friendly;
-            Bitboard tmp = moves_bb;
-            while (tmp)
+            const auto from = static_cast<Square>(lsb_index(our_knights));
+            Bitboard targets = knight_attacks(from) & ~friendly;
+            while (targets)
             {
-                const auto bit = tmp & -tmp;
-                const auto to = static_cast<Square>(std::countr_zero(bit));
-                static_cast<void>(add_move(moves, count, static_cast<Move>(static_cast<std::uint16_t>(sq) | (static_cast<std::uint16_t>(to) << 6))));
-                tmp &= tmp - 1;
+                const auto to = static_cast<Square>(lsb_index(targets));
+                static_cast<void>(add_move(moves, count, make_move(from, to, (bit(to) & enemies) != 0 ? MoveFlag::Capture : MoveFlag::Quiet)));
+                targets &= targets - 1;
             }
             our_knights &= our_knights - 1;
         }
@@ -362,18 +175,16 @@ namespace aurora::chess
     {
         Bitboard our_bishops = board.piece_bb(PieceType::Bishop) & board.occupancy(us);
         const auto friendly = board.occupancy(us);
+        const auto enemies = board.occupancy(~us);
         while (our_bishops)
         {
-            const auto lsb = our_bishops & -our_bishops;
-            const auto sq = static_cast<Square>(std::countr_zero(lsb));
-            const auto moves_bb = MagicBitboards::bishop_moves(sq, board.all_occupancy()) & ~friendly;
-            Bitboard tmp = moves_bb;
-            while (tmp)
+            const auto from = static_cast<Square>(lsb_index(our_bishops));
+            Bitboard targets = bishop_attacks(from, board.all_occupancy()) & ~friendly;
+            while (targets)
             {
-                const auto bit = tmp & -tmp;
-                const auto to = static_cast<Square>(std::countr_zero(bit));
-                static_cast<void>(add_move(moves, count, static_cast<Move>(static_cast<std::uint16_t>(sq) | (static_cast<std::uint16_t>(to) << 6))));
-                tmp &= tmp - 1;
+                const auto to = static_cast<Square>(lsb_index(targets));
+                static_cast<void>(add_move(moves, count, make_move(from, to, (bit(to) & enemies) != 0 ? MoveFlag::Capture : MoveFlag::Quiet)));
+                targets &= targets - 1;
             }
             our_bishops &= our_bishops - 1;
         }
@@ -383,18 +194,16 @@ namespace aurora::chess
     {
         Bitboard our_rooks = board.piece_bb(PieceType::Rook) & board.occupancy(us);
         const auto friendly = board.occupancy(us);
+        const auto enemies = board.occupancy(~us);
         while (our_rooks)
         {
-            const auto lsb = our_rooks & -our_rooks;
-            const auto sq = static_cast<Square>(std::countr_zero(lsb));
-            const auto moves_bb = MagicBitboards::rook_moves(sq, board.all_occupancy()) & ~friendly;
-            Bitboard tmp = moves_bb;
-            while (tmp)
+            const auto from = static_cast<Square>(lsb_index(our_rooks));
+            Bitboard targets = rook_attacks(from, board.all_occupancy()) & ~friendly;
+            while (targets)
             {
-                const auto bit = tmp & -tmp;
-                const auto to = static_cast<Square>(std::countr_zero(bit));
-                static_cast<void>(add_move(moves, count, static_cast<Move>(static_cast<std::uint16_t>(sq) | (static_cast<std::uint16_t>(to) << 6))));
-                tmp &= tmp - 1;
+                const auto to = static_cast<Square>(lsb_index(targets));
+                static_cast<void>(add_move(moves, count, make_move(from, to, (bit(to) & enemies) != 0 ? MoveFlag::Capture : MoveFlag::Quiet)));
+                targets &= targets - 1;
             }
             our_rooks &= our_rooks - 1;
         }
@@ -404,18 +213,16 @@ namespace aurora::chess
     {
         Bitboard our_queens = board.piece_bb(PieceType::Queen) & board.occupancy(us);
         const auto friendly = board.occupancy(us);
+        const auto enemies = board.occupancy(~us);
         while (our_queens)
         {
-            const auto lsb = our_queens & -our_queens;
-            const auto sq = static_cast<Square>(std::countr_zero(lsb));
-            const auto moves_bb = (MagicBitboards::bishop_moves(sq, board.all_occupancy()) | MagicBitboards::rook_moves(sq, board.all_occupancy())) & ~friendly;
-            Bitboard tmp = moves_bb;
-            while (tmp)
+            const auto from = static_cast<Square>(lsb_index(our_queens));
+            Bitboard targets = queen_attacks(from, board.all_occupancy()) & ~friendly;
+            while (targets)
             {
-                const auto bit = tmp & -tmp;
-                const auto to = static_cast<Square>(std::countr_zero(bit));
-                static_cast<void>(add_move(moves, count, static_cast<Move>(static_cast<std::uint16_t>(sq) | (static_cast<std::uint16_t>(to) << 6))));
-                tmp &= tmp - 1;
+                const auto to = static_cast<Square>(lsb_index(targets));
+                static_cast<void>(add_move(moves, count, make_move(from, to, (bit(to) & enemies) != 0 ? MoveFlag::Capture : MoveFlag::Quiet)));
+                targets &= targets - 1;
             }
             our_queens &= our_queens - 1;
         }
@@ -424,21 +231,60 @@ namespace aurora::chess
     void MoveGenerator::generate_king_moves(const Board &board, std::array<MoveEntry, 256> &moves, std::size_t &count, Color us) const
     {
         Bitboard our_kings = board.piece_bb(PieceType::King) & board.occupancy(us);
-        const auto friendly = board.occupancy(us);
-        while (our_kings)
+        if (our_kings == 0)
         {
-            const auto lsb = our_kings & -our_kings;
-            const auto sq = static_cast<Square>(std::countr_zero(lsb));
-            const auto moves_bb = king_moves(sq) & ~friendly;
-            Bitboard tmp = moves_bb;
-            while (tmp)
+            return;
+        }
+
+        const auto from = static_cast<Square>(lsb_index(our_kings));
+        const auto friendly = board.occupancy(us);
+        const auto enemies = board.occupancy(~us);
+        Bitboard targets = king_attacks(from) & ~friendly;
+        while (targets)
+        {
+            const auto to = static_cast<Square>(lsb_index(targets));
+            static_cast<void>(add_move(moves, count, make_move(from, to, (bit(to) & enemies) != 0 ? MoveFlag::Capture : MoveFlag::Quiet)));
+            targets &= targets - 1;
+        }
+
+        if (is_in_check(board, us))
+        {
+            return;
+        }
+
+        if (us == Color::White && from == Square::E1)
+        {
+            if (has_castling(board.castling_rights(), CastlingRights::WhiteKingSide) &&
+                board.piece_on(Square::H1) == Piece::WhiteRook &&
+                board.is_empty(Square::F1) && board.is_empty(Square::G1) &&
+                !is_square_attacked(board, Square::F1, Color::Black) && !is_square_attacked(board, Square::G1, Color::Black))
             {
-                const auto bit = tmp & -tmp;
-                const auto to = static_cast<Square>(std::countr_zero(bit));
-                static_cast<void>(add_move(moves, count, static_cast<Move>(static_cast<std::uint16_t>(sq) | (static_cast<std::uint16_t>(to) << 6))));
-                tmp &= tmp - 1;
+                static_cast<void>(add_move(moves, count, make_move(Square::E1, Square::G1, MoveFlag::KingCastle)));
             }
-            our_kings &= our_kings - 1;
+            if (has_castling(board.castling_rights(), CastlingRights::WhiteQueenSide) &&
+                board.piece_on(Square::A1) == Piece::WhiteRook &&
+                board.is_empty(Square::D1) && board.is_empty(Square::C1) && board.is_empty(Square::B1) &&
+                !is_square_attacked(board, Square::D1, Color::Black) && !is_square_attacked(board, Square::C1, Color::Black))
+            {
+                static_cast<void>(add_move(moves, count, make_move(Square::E1, Square::C1, MoveFlag::QueenCastle)));
+            }
+        }
+        else if (us == Color::Black && from == Square::E8)
+        {
+            if (has_castling(board.castling_rights(), CastlingRights::BlackKingSide) &&
+                board.piece_on(Square::H8) == Piece::BlackRook &&
+                board.is_empty(Square::F8) && board.is_empty(Square::G8) &&
+                !is_square_attacked(board, Square::F8, Color::White) && !is_square_attacked(board, Square::G8, Color::White))
+            {
+                static_cast<void>(add_move(moves, count, make_move(Square::E8, Square::G8, MoveFlag::KingCastle)));
+            }
+            if (has_castling(board.castling_rights(), CastlingRights::BlackQueenSide) &&
+                board.piece_on(Square::A8) == Piece::BlackRook &&
+                board.is_empty(Square::D8) && board.is_empty(Square::C8) && board.is_empty(Square::B8) &&
+                !is_square_attacked(board, Square::D8, Color::White) && !is_square_attacked(board, Square::C8, Color::White))
+            {
+                static_cast<void>(add_move(moves, count, make_move(Square::E8, Square::C8, MoveFlag::QueenCastle)));
+            }
         }
     }
 

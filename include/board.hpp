@@ -127,6 +127,24 @@ namespace aurora::chess
         All = WhiteKingSide | WhiteQueenSide | BlackKingSide | BlackQueenSide,
     };
 
+    enum class MoveFlag : std::uint8_t
+    {
+        Quiet = 0,
+        DoublePawnPush = 1,
+        KingCastle = 2,
+        QueenCastle = 3,
+        Capture = 4,
+        EnPassant = 5,
+        KnightPromotion = 8,
+        BishopPromotion = 9,
+        RookPromotion = 10,
+        QueenPromotion = 11,
+        KnightPromotionCapture = 12,
+        BishopPromotionCapture = 13,
+        RookPromotionCapture = 14,
+        QueenPromotionCapture = 15,
+    };
+
     constexpr Color operator~(Color color) noexcept
     {
         return color == Color::White ? Color::Black : Color::White;
@@ -135,6 +153,33 @@ namespace aurora::chess
     constexpr Bitboard bit(Square square) noexcept
     {
         return static_cast<Bitboard>(1) << static_cast<std::size_t>(square);
+    }
+
+    [[nodiscard]] constexpr Move make_move(Square from, Square to, MoveFlag flag = MoveFlag::Quiet) noexcept
+    {
+        return static_cast<Move>(static_cast<std::uint16_t>(from) |
+                                 (static_cast<std::uint16_t>(to) << 6) |
+                                 (static_cast<std::uint16_t>(flag) << 12));
+    }
+
+    [[nodiscard]] constexpr Square move_from(Move move) noexcept
+    {
+        return static_cast<Square>(move & 0x3Fu);
+    }
+
+    [[nodiscard]] constexpr Square move_to(Move move) noexcept
+    {
+        return static_cast<Square>((move >> 6) & 0x3Fu);
+    }
+
+    [[nodiscard]] constexpr MoveFlag move_flag(Move move) noexcept
+    {
+        return static_cast<MoveFlag>((move >> 12) & 0xFu);
+    }
+
+    [[nodiscard]] constexpr bool is_promotion(MoveFlag flag) noexcept
+    {
+        return static_cast<std::uint8_t>(flag) >= static_cast<std::uint8_t>(MoveFlag::KnightPromotion);
     }
 
     constexpr std::uint32_t popcount(Bitboard value) noexcept
@@ -273,6 +318,8 @@ namespace aurora::chess
         [[nodiscard]] Square en_passant_square() const noexcept;
         [[nodiscard]] std::uint32_t halfmove_clock() const noexcept;
         [[nodiscard]] std::uint32_t fullmove_number() const noexcept;
+
+        bool make_move(Move move);
 
     private:
         void clear();

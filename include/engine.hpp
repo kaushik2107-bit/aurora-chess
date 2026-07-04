@@ -22,7 +22,6 @@ namespace aurora::chess
         [[nodiscard]] const Board &board() const noexcept;
         [[nodiscard]] std::array<MoveEntry, 256> legal_moves() const;
         [[nodiscard]] std::uint64_t perft(std::size_t depth) const;
-        void run_uci_loop();
 
     private:
         std::string name_;
