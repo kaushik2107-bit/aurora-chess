@@ -29,7 +29,7 @@ namespace aurora::chess
     private:
         std::string name_;
         Board board_;
-        mutable TranspositionTable transposition_table_;
+        mutable TranspositionTable ttable_;
     };
 
 } // namespace aurora::chess
