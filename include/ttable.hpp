@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <shared_mutex>
 #include <vector>
 
 #include "board.hpp"
@@ -34,11 +36,12 @@ namespace aurora::chess
 
         void clear();
         void resize(std::size_t entry_count);
-        [[nodiscard]] std::size_t entry_count() const noexcept;
-        [[nodiscard]] const TranspositionEntry* probe(Key key) const noexcept;
-        void store(Key key, std::size_t depth, Score score, Bound bound, Move best_move) noexcept;
+        [[nodiscard]] std::size_t entry_count() const;
+        [[nodiscard]] std::optional<TranspositionEntry> probe(Key key) const;
+        void store(Key key, std::size_t depth, Score score, Bound bound, Move best_move);
 
     private:
+        mutable std::shared_mutex mutex_;
         std::vector<TranspositionEntry> entries_;
     };
 

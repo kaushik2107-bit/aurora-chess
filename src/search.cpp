@@ -182,7 +182,7 @@ namespace aurora::chess
         SearchIteration SearchWorker::search_root(Board& board, std::size_t depth, Move previous_best)
         {
             Move root_tt_move = 0;
-            if (const auto* root_entry = state_.table.probe(board.key()))
+            if (const auto root_entry = state_.table.probe(board.key()))
             {
                 root_tt_move = root_entry->best_move;
             }
@@ -228,7 +228,7 @@ namespace aurora::chess
         SearchIteration SearchWorker::search_root_parallel(Board& board, std::size_t depth, Move previous_best)
         {
             Move root_tt_move = 0;
-            if (const auto* root_entry = state_.table.probe(board.key()))
+            if (const auto root_entry = state_.table.probe(board.key()))
             {
                 root_tt_move = root_entry->best_move;
             }
@@ -271,12 +271,11 @@ namespace aurora::chess
                     return;
                 }
 
-                TranspositionTable local_table{1 << 16};
                 SearchLimits child_limits = limits_;
                 child_limits.threads = 1;
                 child_limits.thread_pool = nullptr;
                 child_limits.on_iteration = {};
-                SearchWorker child{std::move(child_limits), local_table, state_.evaluator};
+                SearchWorker child{std::move(child_limits), state_.table, state_.evaluator};
                 child.state_.max_quiescence_ply = depth + limits_.quiescence_depth;
 
                 Board child_board = board;
@@ -383,7 +382,7 @@ namespace aurora::chess
             const bool pv_node = beta - alpha > 1;
             Move tt_move = 0;
 
-            if (const auto* entry = state_.table.probe(board.key()))
+            if (const auto entry = state_.table.probe(board.key()))
             {
                 tt_move = entry->best_move;
                 if (entry->depth >= depth)
