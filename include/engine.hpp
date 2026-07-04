@@ -21,7 +21,7 @@ namespace aurora::chess
 
         void set_position(std::string_view fen);
         bool make_move(Move move);
-        [[nodiscard]] const Board &board() const noexcept;
+        [[nodiscard]] const Board& board() const noexcept;
         [[nodiscard]] MoveList legal_moves() const;
         [[nodiscard]] std::uint64_t perft(std::size_t depth) const;
         [[nodiscard]] SearchResult search(SearchLimits limits) const;
@@ -29,6 +29,7 @@ namespace aurora::chess
     private:
         std::string name_;
         Board board_;
+        mutable TranspositionTable transposition_table_;
     };
 
 } // namespace aurora::chess

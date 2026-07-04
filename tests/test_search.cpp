@@ -10,11 +10,12 @@ namespace
     TEST(SearchTests, FindsALegalMoveFromInitialPosition)
     {
         const aurora::chess::Board board;
-        const auto result = aurora::chess::Searcher{}.search(board, aurora::chess::SearchLimits{.depth = 1});
+        aurora::chess::TranspositionTable table{};
+        const auto result = aurora::chess::search(board, aurora::chess::SearchLimits{.depth = 1}, table);
         const auto moves = aurora::chess::MoveGenerator{}.generate(board);
 
         bool found = false;
-        for (const auto &entry : moves)
+        for (const auto& entry : moves)
         {
             found = found || entry.move == result.best_move;
         }
@@ -27,7 +28,8 @@ namespace
     TEST(SearchTests, ReportsNoMoveInCheckmate)
     {
         const aurora::chess::Board board{"7k/6Q1/6K1/8/8/8/8/8 b - - 0 1"};
-        const auto result = aurora::chess::Searcher{}.search(board, aurora::chess::SearchLimits{.depth = 2});
+        aurora::chess::TranspositionTable table{};
+        const auto result = aurora::chess::search(board, aurora::chess::SearchLimits{.depth = 2}, table);
 
         EXPECT_EQ(result.best_move, 0);
         EXPECT_LT(result.score, -aurora::chess::kMateScore + 10);
@@ -36,7 +38,8 @@ namespace
     TEST(SearchTests, RecordsEachIterativeDeepeningStep)
     {
         const aurora::chess::Board board;
-        const auto result = aurora::chess::Searcher{}.search(board, aurora::chess::SearchLimits{.depth = 3});
+        aurora::chess::TranspositionTable table{};
+        const auto result = aurora::chess::search(board, aurora::chess::SearchLimits{.depth = 3}, table);
 
         ASSERT_EQ(result.iterations.size(), 3u);
         EXPECT_EQ(result.iterations[0].depth, 1u);

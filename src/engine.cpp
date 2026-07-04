@@ -6,7 +6,7 @@
 
 namespace aurora::chess
 {
-    Engine::Engine(std::string_view name) noexcept : name_(name) {}
+    Engine::Engine(std::string_view name) noexcept : name_(name), transposition_table_(1 << 20) {}
 
     std::string_view Engine::name() const noexcept
     {
@@ -33,7 +33,7 @@ namespace aurora::chess
         return board_.make_move(move);
     }
 
-    const Board &Engine::board() const noexcept
+    const Board& Engine::board() const noexcept
     {
         return board_;
     }
@@ -49,6 +49,6 @@ namespace aurora::chess
 
     SearchResult Engine::search(SearchLimits limits) const
     {
-        return Searcher{}.search(board_, limits);
+        return aurora::chess::search(board_, limits, transposition_table_);
     }
 } // namespace aurora::chess
