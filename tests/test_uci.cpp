@@ -65,17 +65,37 @@ namespace
         EXPECT_NE(output.str().find("option name Hash type spin"), std::string::npos);
         EXPECT_NE(output.str().find("option name Clear Hash type button"), std::string::npos);
         EXPECT_NE(output.str().find("option name Ponder type check"), std::string::npos);
+        EXPECT_NE(output.str().find("option name Threads type spin"), std::string::npos);
         EXPECT_NE(output.str().find("uciok"), std::string::npos);
     }
 
     TEST(UciTests, AppliesSetOptionCommands)
     {
         aurora::chess::Engine engine{"Aurora"};
-        std::istringstream input{"setoption name Hash value 32\nsetoption name Clear Hash\nisready\nquit\n"};
+        std::istringstream input{"setoption name Hash value 32\n"
+                                 "setoption name Threads value 2\n"
+                                 "setoption name Clear Hash\n"
+                                 "isready\n"
+                                 "quit\n"};
         std::ostringstream output;
 
         EXPECT_NO_THROW(aurora::chess::run_uci_loop(engine, input, output));
         EXPECT_NE(output.str().find("readyok"), std::string::npos);
+    }
+
+    TEST(UciTests, StopReturnsBestMoveFromBackgroundSearch)
+    {
+        aurora::chess::Engine engine{"Aurora"};
+        std::istringstream input{"position startpos\n"
+                                 "setoption name Threads value 2\n"
+                                 "go depth 8\n"
+                                 "stop\n"
+                                 "quit\n"};
+        std::ostringstream output;
+
+        EXPECT_NO_THROW(aurora::chess::run_uci_loop(engine, input, output));
+        EXPECT_NE(output.str().find("bestmove "), std::string::npos);
+        EXPECT_EQ(output.str().find("bestmove 0000"), std::string::npos);
     }
 
     TEST(UciTests, NewGameResetsPosition)

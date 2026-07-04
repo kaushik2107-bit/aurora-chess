@@ -90,6 +90,7 @@ add_library(aurora_chess STATIC
     src/search.cpp
     src/see.cpp
     src/speed.cpp
+    src/thread.cpp
     src/ttable.cpp
     src/zobrist.cpp
 )

@@ -7,6 +7,7 @@
 #include "movegen.hpp"
 #include "nnue.hpp"
 #include "search.hpp"
+#include "thread.hpp"
 
 namespace aurora::chess
 {
@@ -27,6 +28,8 @@ namespace aurora::chess
         void new_game();
         void clear_hash();
         void set_hash_size_mb(std::size_t megabytes);
+        void set_thread_count(std::size_t threads);
+        [[nodiscard]] std::size_t thread_count() const noexcept;
         [[nodiscard]] const Board& board() const noexcept;
         [[nodiscard]] MoveList legal_moves() const;
         [[nodiscard]] Score evaluate() const noexcept;
@@ -38,6 +41,7 @@ namespace aurora::chess
         Board board_;
         NnueEvaluator evaluator_;
         mutable TranspositionTable ttable_;
+        mutable ThreadPool threads_;
     };
 
 } // namespace aurora::chess

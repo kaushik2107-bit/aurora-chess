@@ -6,6 +6,7 @@
 #include "speed.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstddef>
@@ -13,9 +14,11 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace aurora::chess
@@ -392,7 +395,8 @@ namespace aurora::chess
                    << "id author Aurora\n"
                    << "option name Hash type spin default " << state.hash_mb << " min 1 max 1024\n"
                    << "option name Clear Hash type button\n"
-                   << "option name Ponder type check default false\n";
+                   << "option name Ponder type check default false\n"
+                   << "option name Threads type spin default " << engine.thread_count() << " min 1 max 128\n";
             if (engine.nnue_loaded())
             {
                 output << "info string NNUE evaluation using " << engine.nnue_path() << '\n';
@@ -425,6 +429,13 @@ namespace aurora::chess
             else if (name == "ponder")
             {
                 state.ponder = option.value == "true" || option.value == "1";
+            }
+            else if (name == "threads")
+            {
+                if (const auto threads = parse_size(option.value))
+                {
+                    engine.set_thread_count(std::clamp<std::size_t>(*threads, 1, 128));
+                }
             }
         }
 
@@ -472,16 +483,89 @@ namespace aurora::chess
             }
         }
 
-        void run_search_command(Engine& engine, std::ostream& output, const GoCommand& go)
+        class SearchController
         {
-            SearchLimits limits;
-            limits.depth = go.depth;
-            limits.quiescence_depth = go.quiescence_depth;
-            limits.on_iteration = [&output](const SearchIteration& iteration) { print_search_info(output, iteration); };
+        public:
+            ~SearchController()
+            {
+                stop_and_wait();
+            }
 
-            const auto result = engine.search(limits);
-            output << "bestmove " << (result.best_move == 0 ? "0000" : move_to_uci(result.best_move)) << '\n'
-                   << std::flush;
+            SearchController(const SearchController&) = delete;
+            SearchController& operator=(const SearchController&) = delete;
+
+            SearchController() = default;
+
+            void start(Engine& engine, std::ostream& output, std::mutex& output_mutex, GoCommand go)
+            {
+                stop_and_wait();
+                stop_.store(false, std::memory_order_relaxed);
+                infinite_ = go.infinite || go.ponder;
+                worker_ = std::thread(
+                    [this, &engine, &output, &output_mutex, go]
+                    {
+                        SearchLimits limits;
+                        limits.depth = go.depth;
+                        limits.quiescence_depth = go.quiescence_depth;
+                        limits.stop = &stop_;
+                        limits.on_iteration = [&output, &output_mutex](const SearchIteration& iteration)
+                        {
+                            std::lock_guard lock{output_mutex};
+                            print_search_info(output, iteration);
+                        };
+
+                        const auto result = engine.search(limits);
+                        Move best_move = result.best_move;
+                        if (best_move == 0)
+                        {
+                            const auto moves = engine.legal_moves();
+                            if (!moves.empty())
+                            {
+                                best_move = moves.begin()->move;
+                            }
+                        }
+                        std::lock_guard lock{output_mutex};
+                        output << "bestmove " << (best_move == 0 ? "0000" : move_to_uci(best_move)) << '\n'
+                               << std::flush;
+                    });
+            }
+
+            void stop_and_wait()
+            {
+                stop_.store(true, std::memory_order_relaxed);
+                wait();
+                stop_.store(false, std::memory_order_relaxed);
+            }
+
+            void wait_or_stop_for_quit()
+            {
+                if (infinite_)
+                {
+                    stop_.store(true, std::memory_order_relaxed);
+                }
+                wait();
+                stop_.store(false, std::memory_order_relaxed);
+            }
+
+            void wait()
+            {
+                if (worker_.joinable())
+                {
+                    worker_.join();
+                }
+                infinite_ = false;
+            }
+
+        private:
+            std::atomic_bool stop_{false};
+            std::thread worker_;
+            bool infinite_{false};
+        };
+
+        void run_search_command(SearchController& search, Engine& engine, std::ostream& output,
+                                std::mutex& output_mutex, const GoCommand& go)
+        {
+            search.start(engine, output, output_mutex, go);
         }
 
     } // namespace
@@ -489,6 +573,8 @@ namespace aurora::chess
     void run_uci_loop(Engine& engine, std::istream& input, std::ostream& output)
     {
         UciState state;
+        std::mutex output_mutex;
+        SearchController search;
         std::string line;
         while (std::getline(input, line))
         {
@@ -500,14 +586,17 @@ namespace aurora::chess
 
             if (command == "isready")
             {
+                std::lock_guard lock{output_mutex};
                 output << "readyok\n" << std::flush;
             }
             else if (command == "uci")
             {
+                std::lock_guard lock{output_mutex};
                 print_uci(output, engine, state);
             }
             else if (command == "ucinewgame")
             {
+                search.stop_and_wait();
                 engine.new_game();
             }
             else if (command.rfind("debug ", 0) == 0)
@@ -516,6 +605,7 @@ namespace aurora::chess
             }
             else if (command.rfind("setoption ", 0) == 0)
             {
+                search.stop_and_wait();
                 if (const auto option = parse_setoption(command))
                 {
                     apply_option(engine, state, *option);
@@ -523,6 +613,7 @@ namespace aurora::chess
             }
             else if (command.rfind("position ", 0) == 0)
             {
+                search.stop_and_wait();
                 if (const auto position = parse_position(command))
                 {
                     engine.set_position(position->fen);
@@ -537,10 +628,14 @@ namespace aurora::chess
             }
             else if (command == "d")
             {
+                search.stop_and_wait();
+                std::lock_guard lock{output_mutex};
                 print_board(output, engine.board());
             }
             else if (command == "eval")
             {
+                search.stop_and_wait();
+                std::lock_guard lock{output_mutex};
                 output << "info string eval " << engine.evaluate() << '\n' << std::flush;
             }
             else if (command.rfind("go", 0) == 0 && (command.size() == 2 || std::isspace(command[2]) != 0))
@@ -549,22 +644,25 @@ namespace aurora::chess
                 switch (go.mode)
                 {
                 case GoMode::Perft:
+                    search.stop_and_wait();
                     run_perft_command(engine, output, go.depth);
                     break;
                 case GoMode::Speed:
+                    search.stop_and_wait();
                     run_speed_command(engine, output, go.depth);
                     break;
                 case GoMode::Search:
-                    run_search_command(engine, output, go);
+                    run_search_command(search, engine, output, output_mutex, go);
                     break;
                 }
             }
             else if (command == "stop" || command == "ponderhit")
             {
-                // Search is synchronous today, so these commands are accepted as no-ops.
+                search.stop_and_wait();
             }
             else if (command == "quit")
             {
+                search.wait_or_stop_for_quit();
                 break;
             }
         }

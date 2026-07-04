@@ -1,10 +1,13 @@
 #include "search.hpp"
 
 #include "movepick.hpp"
+#include "thread.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
+#include <thread>
 #include <utility>
 
 namespace aurora::chess
@@ -120,14 +123,21 @@ namespace aurora::chess
 
         private:
             [[nodiscard]] SearchIteration search_root(Board& board, std::size_t depth, Move previous_best);
+            [[nodiscard]] SearchIteration search_root_parallel(Board& board, std::size_t depth, Move previous_best);
             [[nodiscard]] Score alpha_beta(Board& board, std::size_t depth, Score alpha, Score beta, std::size_t ply,
                                            std::vector<Move>& pv);
             [[nodiscard]] Score quiescence(Board& board, Score alpha, Score beta, std::size_t ply,
                                            std::vector<Move>& pv);
+            [[nodiscard]] bool stopped() const noexcept;
 
             SearchLimits limits_;
             SearchState state_;
         };
+
+        bool SearchWorker::stopped() const noexcept
+        {
+            return limits_.stop != nullptr && limits_.stop->load(std::memory_order_relaxed);
+        }
 
         SearchResult SearchWorker::search(const Board& board)
         {
@@ -138,8 +148,19 @@ namespace aurora::chess
 
             for (std::size_t depth = 1; depth <= max_depth; ++depth)
             {
+                if (stopped())
+                {
+                    break;
+                }
+
                 state_.max_quiescence_ply = depth + limits_.quiescence_depth;
-                SearchIteration iteration = search_root(working, depth, result.best_move);
+                SearchIteration iteration = limits_.threads > 1 ? search_root_parallel(working, depth, result.best_move)
+                                                                : search_root(working, depth, result.best_move);
+
+                if (stopped() && iteration.best_move == 0)
+                {
+                    break;
+                }
 
                 result.best_move = iteration.best_move;
                 result.pv = iteration.pv;
@@ -176,6 +197,11 @@ namespace aurora::chess
                 board, move_ordering(root_order_move, state_, 0), [](Move) { return true; },
                 [&](Move move, std::size_t)
                 {
+                    if (stopped())
+                    {
+                        return true;
+                    }
+
                     std::vector<Move> child_pv;
                     const Score score = -alpha_beta(board, depth - 1, -kInfiniteScore, -alpha, 1, child_pv);
                     if (score > best_score)
@@ -199,9 +225,153 @@ namespace aurora::chess
             };
         }
 
+        SearchIteration SearchWorker::search_root_parallel(Board& board, std::size_t depth, Move previous_best)
+        {
+            Move root_tt_move = 0;
+            if (const auto* root_entry = state_.table.probe(board.key()))
+            {
+                root_tt_move = root_entry->best_move;
+            }
+
+            const Move root_order_move = previous_best != 0 ? previous_best : root_tt_move;
+            std::vector<Move> root_moves;
+            MovePicker picker{board, move_ordering(root_order_move, state_, 0)};
+            for (Move move = picker.next(); move != 0; move = picker.next())
+            {
+                if (board.make_move(move))
+                {
+                    root_moves.push_back(move);
+                    board.undo_move();
+                }
+            }
+
+            if (root_moves.empty())
+            {
+                return SearchIteration{
+                    0, {}, board.checkers() != 0 ? -kMateScore : 0, state_.nodes, depth, state_.selective_depth,
+                };
+            }
+
+            struct RootResult
+            {
+                Move move{0};
+                std::vector<Move> pv;
+                Score score{-kInfiniteScore};
+                std::uint64_t nodes{0};
+                std::size_t selective_depth{0};
+            };
+
+            std::vector<RootResult> results(root_moves.size());
+            std::atomic_size_t next_index{0};
+            const std::size_t worker_count = std::min<std::size_t>({limits_.threads, root_moves.size(), 64});
+            auto search_root_move = [&](std::size_t index)
+            {
+                if (stopped() || index >= root_moves.size())
+                {
+                    return;
+                }
+
+                TranspositionTable local_table{1 << 16};
+                SearchLimits child_limits = limits_;
+                child_limits.threads = 1;
+                child_limits.thread_pool = nullptr;
+                child_limits.on_iteration = {};
+                SearchWorker child{std::move(child_limits), local_table, state_.evaluator};
+                child.state_.max_quiescence_ply = depth + limits_.quiescence_depth;
+
+                Board child_board = board;
+                const Move move = root_moves[index];
+                if (!child_board.make_move(move))
+                {
+                    return;
+                }
+
+                std::vector<Move> child_pv;
+                const std::size_t child_depth = depth > 0 ? depth - 1 : 0;
+                const std::uint64_t nodes_before = child.state_.nodes;
+                const Score score =
+                    child_depth == 0
+                        ? -child.quiescence(child_board, -kInfiniteScore, kInfiniteScore, 1, child_pv)
+                        : -child.alpha_beta(child_board, child_depth, -kInfiniteScore, kInfiniteScore, 1, child_pv);
+
+                RootResult result;
+                result.move = move;
+                update_pv(result.pv, move, child_pv);
+                result.score = score;
+                result.nodes = child.state_.nodes - nodes_before;
+                result.selective_depth = child.state_.selective_depth;
+                results[index] = std::move(result);
+            };
+
+            if (limits_.thread_pool != nullptr && limits_.thread_pool->size() > 1)
+            {
+                limits_.thread_pool->parallel_for(root_moves.size(), search_root_move);
+            }
+            else
+            {
+                std::vector<std::thread> workers;
+                workers.reserve(worker_count);
+                for (std::size_t worker_index = 0; worker_index < worker_count; ++worker_index)
+                {
+                    workers.emplace_back(
+                        [&]
+                        {
+                            while (!stopped())
+                            {
+                                const std::size_t index = next_index.fetch_add(1, std::memory_order_relaxed);
+                                if (index >= root_moves.size())
+                                {
+                                    break;
+                                }
+                                search_root_move(index);
+                            }
+                        });
+                }
+
+                for (auto& worker : workers)
+                {
+                    worker.join();
+                }
+            }
+
+            Move best_move = 0;
+            std::vector<Move> best_pv;
+            Score best_score = -kInfiniteScore;
+            std::uint64_t nodes = 0;
+            std::size_t selective_depth = state_.selective_depth;
+            for (const auto& result : results)
+            {
+                nodes += result.nodes;
+                selective_depth = std::max(selective_depth, result.selective_depth);
+                if (result.move != 0 && result.score > best_score)
+                {
+                    best_move = result.move;
+                    best_pv = result.pv;
+                    best_score = result.score;
+                }
+            }
+
+            state_.nodes += nodes;
+            state_.selective_depth = selective_depth;
+            if (best_move != 0 && !stopped())
+            {
+                state_.table.store(board.key(), depth, best_score, Bound::Exact, best_move);
+            }
+
+            return SearchIteration{
+                best_move, best_pv, best_move == 0 ? 0 : best_score, state_.nodes, depth, state_.selective_depth,
+            };
+        }
+
         Score SearchWorker::alpha_beta(Board& board, std::size_t depth, Score alpha, Score beta, std::size_t ply,
                                        std::vector<Move>& pv)
         {
+            if (stopped())
+            {
+                pv.clear();
+                return state_.evaluator.evaluate(board);
+            }
+
             if (depth == 0)
             {
                 return quiescence(board, alpha, beta, ply, pv);
@@ -246,6 +416,11 @@ namespace aurora::chess
                 board, move_ordering(tt_move, state_, ply), [](Move) { return true; },
                 [&](Move move, std::size_t move_index)
                 {
+                    if (stopped())
+                    {
+                        return true;
+                    }
+
                     std::vector<Move> child_pv;
                     Score score = 0;
                     if (move_index == 0)
@@ -284,12 +459,21 @@ namespace aurora::chess
             const Bound bound = best_score <= original_alpha ? Bound::Upper
                                 : best_score >= beta         ? Bound::Lower
                                                              : Bound::Exact;
-            state_.table.store(board.key(), depth, best_score, bound, best_move);
+            if (!stopped())
+            {
+                state_.table.store(board.key(), depth, best_score, bound, best_move);
+            }
             return best_score;
         }
 
         Score SearchWorker::quiescence(Board& board, Score alpha, Score beta, std::size_t ply, std::vector<Move>& pv)
         {
+            if (stopped())
+            {
+                pv.clear();
+                return state_.evaluator.evaluate(board);
+            }
+
             ++state_.nodes;
             state_.selective_depth = std::max(state_.selective_depth, ply);
             pv.clear();
@@ -322,6 +506,11 @@ namespace aurora::chess
                 },
                 [&](Move move, std::size_t)
                 {
+                    if (stopped())
+                    {
+                        return true;
+                    }
+
                     std::vector<Move> child_pv;
                     const Score score = -quiescence(board, -beta, -alpha, ply + 1, child_pv);
                     if (score >= beta)

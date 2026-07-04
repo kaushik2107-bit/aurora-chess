@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -11,6 +12,8 @@
 
 namespace aurora::chess
 {
+
+    class ThreadPool;
 
     constexpr Score kInfiniteScore = 32000;
     constexpr Score kMateScore = 30000;
@@ -29,6 +32,9 @@ namespace aurora::chess
     {
         std::size_t depth{1};
         std::size_t quiescence_depth{8};
+        std::size_t threads{1};
+        std::atomic_bool* stop{nullptr};
+        ThreadPool* thread_pool{nullptr};
         std::function<void(const SearchIteration&)> on_iteration{};
     };
 

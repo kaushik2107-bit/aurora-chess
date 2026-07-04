@@ -5,10 +5,12 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace aurora::chess
 {
-    Engine::Engine(std::string_view name) : name_(name), ttable_(1 << 20)
+    Engine::Engine(std::string_view name)
+        : name_(name), ttable_(1 << 20), threads_(std::max<std::size_t>(1, std::thread::hardware_concurrency()))
     {
         [[maybe_unused]] const bool loaded = evaluator_.load_default();
     }
@@ -67,6 +69,16 @@ namespace aurora::chess
         ttable_.resize(entries);
     }
 
+    void Engine::set_thread_count(std::size_t threads)
+    {
+        threads_.resize(threads);
+    }
+
+    std::size_t Engine::thread_count() const noexcept
+    {
+        return threads_.size();
+    }
+
     const Board& Engine::board() const noexcept
     {
         return board_;
@@ -89,6 +101,8 @@ namespace aurora::chess
 
     SearchResult Engine::search(SearchLimits limits) const
     {
+        limits.threads = thread_count();
+        limits.thread_pool = &threads_;
         return aurora::chess::search(board_, limits, ttable_, evaluator_);
     }
 } // namespace aurora::chess

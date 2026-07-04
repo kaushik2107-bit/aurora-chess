@@ -2,6 +2,8 @@
 
 #include "movegen.hpp"
 
+#include <atomic>
+
 #include <gtest/gtest.h>
 
 namespace
@@ -49,6 +51,43 @@ namespace
         EXPECT_GE(result.pv.size(), 3u);
         EXPECT_GE(result.iterations[2].pv.size(), 3u);
         EXPECT_GE(result.selective_depth, result.depth);
+    }
+
+    TEST(SearchTests, SupportsMultipleRootWorkers)
+    {
+        const aurora::chess::Board board;
+        aurora::chess::TranspositionTable table{};
+        aurora::chess::SearchLimits limits;
+        limits.depth = 2;
+        limits.threads = 2;
+
+        const auto result = aurora::chess::search(board, limits, table);
+        const auto moves = aurora::chess::MoveGenerator{}.generate(board);
+
+        bool found = false;
+        for (const auto& entry : moves)
+        {
+            found = found || entry.move == result.best_move;
+        }
+
+        EXPECT_TRUE(found);
+        EXPECT_EQ(result.depth, 2u);
+        EXPECT_GT(result.nodes, 0u);
+    }
+
+    TEST(SearchTests, ObservesStopFlag)
+    {
+        const aurora::chess::Board board;
+        aurora::chess::TranspositionTable table{};
+        std::atomic_bool stop{true};
+        aurora::chess::SearchLimits limits;
+        limits.depth = 6;
+        limits.stop = &stop;
+
+        const auto result = aurora::chess::search(board, limits, table);
+
+        EXPECT_EQ(result.depth, 0u);
+        EXPECT_EQ(result.best_move, 0);
     }
 
 } // namespace
