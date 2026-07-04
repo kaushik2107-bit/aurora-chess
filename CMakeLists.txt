@@ -82,9 +82,13 @@ add_library(aurora_chess STATIC
     src/uci.cpp
     src/attacks.cpp
     src/board.cpp
+    src/evaluation.cpp
     src/movegen.cpp
     src/perft.cpp
+    src/search.cpp
     src/speed.cpp
+    src/ttable.cpp
+    src/zobrist.cpp
 )
 
 target_include_directories(aurora_chess PUBLIC
@@ -111,10 +115,13 @@ include(GoogleTest)
 add_executable(aurora_chess_tests
     tests/test_engine.cpp
     tests/test_board.cpp
+    tests/test_evaluation.cpp
     tests/test_pext.cpp
     tests/test_movegen.cpp
     tests/test_perft.cpp
+    tests/test_search.cpp
     tests/test_speed.cpp
+    tests/test_ttable.cpp
     tests/test_uci.cpp
 )
 

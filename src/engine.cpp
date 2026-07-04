@@ -46,4 +46,9 @@ namespace aurora::chess
     {
         return aurora::chess::perft(board_, depth);
     }
+
+    SearchResult Engine::search(SearchLimits limits) const
+    {
+        return Searcher{}.search(board_, limits);
+    }
 } // namespace aurora::chess

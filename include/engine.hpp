@@ -5,6 +5,7 @@
 
 #include "board.hpp"
 #include "movegen.hpp"
+#include "search.hpp"
 
 namespace aurora::chess
 {
@@ -23,6 +24,7 @@ namespace aurora::chess
         [[nodiscard]] const Board &board() const noexcept;
         [[nodiscard]] MoveList legal_moves() const;
         [[nodiscard]] std::uint64_t perft(std::size_t depth) const;
+        [[nodiscard]] SearchResult search(SearchLimits limits) const;
 
     private:
         std::string name_;

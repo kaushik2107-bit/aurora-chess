@@ -100,6 +100,27 @@ namespace aurora::chess
                    << std::flush;
         }
 
+        void print_search_info(std::ostream &output, const SearchIteration &iteration)
+        {
+            output << "info depth " << iteration.depth
+                   << " seldepth " << iteration.selective_depth
+                   << " score cp " << iteration.score
+                   << " nodes " << iteration.nodes;
+            if (!iteration.pv.empty())
+            {
+                output << " pv";
+                for (const Move move : iteration.pv)
+                {
+                    output << ' ' << move_to_uci(move);
+                }
+            }
+            else if (iteration.best_move != 0)
+            {
+                output << " pv " << move_to_uci(iteration.best_move);
+            }
+            output << '\n' << std::flush;
+        }
+
         struct PositionCommand
         {
             std::string fen;
@@ -254,6 +275,24 @@ namespace aurora::chess
                     const auto elapsed = std::chrono::steady_clock::now() - cumulative_start;
                     print_speed_row(output, stats, nodes_per_second(cumulative_nodes, elapsed));
                 }
+            }
+            else if (command.rfind("go depth ", 0) == 0)
+            {
+                const auto depth_text = command.substr(9);
+                std::istringstream input(depth_text);
+                std::size_t depth = 0;
+                input >> depth;
+
+                SearchLimits limits;
+                limits.depth = depth;
+                limits.on_iteration = [&output](const SearchIteration &iteration)
+                {
+                    print_search_info(output, iteration);
+                };
+
+                const auto result = engine.search(limits);
+                output << "bestmove " << (result.best_move == 0 ? "0000" : move_to_uci(result.best_move)) << '\n'
+                       << std::flush;
             }
             else if (command == "quit")
             {

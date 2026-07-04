@@ -41,4 +41,17 @@ namespace
         EXPECT_NE(output.str().find("Nodes searched: 29"), std::string::npos);
     }
 
+    TEST(UciTests, ReportsSearchBestMove)
+    {
+        aurora::chess::Engine engine{"Aurora"};
+        std::istringstream input{"position startpos\ngo depth 2\nquit\n"};
+        std::ostringstream output;
+
+        EXPECT_NO_THROW(aurora::chess::run_uci_loop(engine, input, output));
+        EXPECT_NE(output.str().find("info depth 1"), std::string::npos);
+        EXPECT_NE(output.str().find("info depth 2"), std::string::npos);
+        EXPECT_NE(output.str().find("seldepth "), std::string::npos);
+        EXPECT_NE(output.str().find("bestmove "), std::string::npos);
+    }
+
 } // namespace

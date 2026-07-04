@@ -10,6 +10,7 @@ namespace aurora::chess
 {
 
     using Bitboard = std::uint64_t;
+    using Key = std::uint64_t;
     using Move = std::uint16_t;
 
     constexpr std::string_view kStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -318,6 +319,7 @@ namespace aurora::chess
         [[nodiscard]] Square en_passant_square() const noexcept;
         [[nodiscard]] std::uint32_t halfmove_clock() const noexcept;
         [[nodiscard]] std::uint32_t fullmove_number() const noexcept;
+        [[nodiscard]] Key key() const noexcept;
         [[nodiscard]] Square king_square(Color color) const noexcept;
         [[nodiscard]] Bitboard checkers() const noexcept;
         [[nodiscard]] Bitboard pinned() const noexcept;
@@ -359,6 +361,7 @@ namespace aurora::chess
         Square en_passant_square_{Square::NoSquare};
         std::uint32_t halfmove_clock_{0};
         std::uint32_t fullmove_number_{1};
+        Key key_{0};
         std::array<UndoState, 256> history_{};
         std::size_t history_size_{0};
     };

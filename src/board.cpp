@@ -3,6 +3,7 @@
 #include "attacks.hpp"
 #include "bitboard.hpp"
 #include "helpers.hpp"
+#include "zobrist.hpp"
 
 #include <cctype>
 #include <cstdlib>
@@ -173,6 +174,7 @@ namespace aurora::chess
         en_passant_square_ = Square::NoSquare;
         halfmove_clock_ = 0;
         fullmove_number_ = 1;
+        key_ = 0;
         history_size_ = 0;
     }
 
@@ -398,6 +400,11 @@ namespace aurora::chess
         return fullmove_number_;
     }
 
+    Key Board::key() const noexcept
+    {
+        return key_;
+    }
+
     Square Board::king_square(Color color) const noexcept
     {
         return king_square_[static_cast<std::size_t>(color)];
@@ -423,6 +430,7 @@ namespace aurora::chess
         checkers_ = 0;
         pinned_ = 0;
         pinners_ = 0;
+        key_ = zobrist::hash(*this);
 
         const Square king = king_square(side_to_move_);
         if (king == Square::NoSquare)
