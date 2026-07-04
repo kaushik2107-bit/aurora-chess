@@ -1,7 +1,7 @@
 #include "attacks.hpp"
 
 #include "bitboard.hpp"
-#include "magic.hpp"
+#include "pext.hpp"
 
 #include <array>
 
@@ -82,12 +82,12 @@ namespace aurora::chess
 
     Bitboard bishop_attacks(Square square, Bitboard occupancy) noexcept
     {
-        return MagicBitboards::bishop_moves(square, occupancy);
+        return SlidingAttacks::bishop_attacks(square, occupancy);
     }
 
     Bitboard rook_attacks(Square square, Bitboard occupancy) noexcept
     {
-        return MagicBitboards::rook_moves(square, occupancy);
+        return SlidingAttacks::rook_attacks(square, occupancy);
     }
 
     Bitboard queen_attacks(Square square, Bitboard occupancy) noexcept

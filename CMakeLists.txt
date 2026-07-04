@@ -42,6 +42,12 @@ function(configure_aurora_target target_name)
     )
 endfunction()
 
+function(configure_aurora_pext_target target_name)
+    if (NOT MSVC)
+        target_compile_options(${target_name} PRIVATE -mbmi2)
+    endif()
+endfunction()
+
 function(configure_aurora_optimized_target target_name)
     target_compile_options(${target_name} PRIVATE
         $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release,RelWithDebInfo>>:/O2>
@@ -79,7 +85,7 @@ add_library(aurora_chess STATIC
     src/movegen.cpp
     src/perft.cpp
     src/speed.cpp
-    src/magic.cpp
+    src/pext.cpp
 )
 
 target_include_directories(aurora_chess PUBLIC
@@ -88,6 +94,7 @@ target_include_directories(aurora_chess PUBLIC
 
 target_compile_features(aurora_chess PUBLIC cxx_std_20)
 configure_aurora_target(aurora_chess)
+configure_aurora_pext_target(aurora_chess)
 configure_aurora_optimized_target(aurora_chess)
 
 add_executable(aurora_chess_app
@@ -96,6 +103,7 @@ add_executable(aurora_chess_app
 
 target_link_libraries(aurora_chess_app PRIVATE aurora_chess)
 configure_aurora_target(aurora_chess_app)
+configure_aurora_pext_target(aurora_chess_app)
 configure_aurora_optimized_target(aurora_chess_app)
 
 enable_testing()
@@ -104,7 +112,7 @@ include(GoogleTest)
 add_executable(aurora_chess_tests
     tests/test_engine.cpp
     tests/test_board.cpp
-    tests/test_magic.cpp
+    tests/test_pext.cpp
     tests/test_movegen.cpp
     tests/test_perft.cpp
     tests/test_speed.cpp
@@ -112,5 +120,6 @@ add_executable(aurora_chess_tests
 
 target_link_libraries(aurora_chess_tests PRIVATE aurora_chess GTest::gtest_main)
 configure_aurora_target(aurora_chess_tests)
+configure_aurora_pext_target(aurora_chess_tests)
 configure_aurora_optimized_target(aurora_chess_tests)
 gtest_discover_tests(aurora_chess_tests)

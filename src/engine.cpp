@@ -1,6 +1,6 @@
 #include "engine.hpp"
 
-#include "magic.hpp"
+#include "pext.hpp"
 #include "perft.hpp"
 
 #include <string>
@@ -13,7 +13,7 @@ namespace aurora::chess
 
         void initialize_engine()
         {
-            MagicBitboards::init();
+            SlidingAttacks::init();
         }
 
     } // namespace

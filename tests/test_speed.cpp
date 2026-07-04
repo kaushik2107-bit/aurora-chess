@@ -1,11 +1,22 @@
 #include "speed.hpp"
 
+#include "pext.hpp"
+
 #include <gtest/gtest.h>
 
 namespace
 {
 
-    TEST(SpeedTests, ReportsInitialPositionStats)
+    class SpeedTests : public ::testing::Test
+    {
+    protected:
+        static void SetUpTestSuite()
+        {
+            aurora::chess::SlidingAttacks::init();
+        }
+    };
+
+    TEST_F(SpeedTests, ReportsInitialPositionStats)
     {
         const aurora::chess::Board board{aurora::chess::kStartFen};
         const auto stats = aurora::chess::speed_stats(board, 4);
