@@ -28,11 +28,16 @@ namespace aurora::chess
         board_.set_fen(fen);
     }
 
-    const Board& Engine::board() const noexcept
+    bool Engine::make_move(Move move)
+    {
+        return board_.make_move(move);
+    }
+
+    const Board &Engine::board() const noexcept
     {
         return board_;
     }
-    std::array<MoveEntry, 256> Engine::legal_moves() const
+    MoveList Engine::legal_moves() const
     {
         return MoveGenerator{}.generate(board_);
     }

@@ -1,6 +1,5 @@
 #include "perft.hpp"
 
-#include "helpers.hpp"
 #include "movegen.hpp"
 
 namespace aurora::chess
@@ -18,24 +17,19 @@ namespace aurora::chess
             const auto moves = MoveGenerator{}.generate(board);
             if (depth == 1)
             {
-                return move_count(moves);
+                return moves.size();
             }
 
             std::uint64_t nodes = 0;
             const bool leaf = depth == 2;
             for (const auto &entry : moves)
             {
-                if (entry.move == 0)
-                {
-                    continue;
-                }
-
                 if (!board.make_move(entry.move))
                 {
                     continue;
                 }
 
-                nodes += leaf ? move_count(MoveGenerator{}.generate(board)) : perft_recursive(board, depth - 1);
+                nodes += leaf ? MoveGenerator{}.generate(board).size() : perft_recursive(board, depth - 1);
                 board.undo_move();
             }
             return nodes;
@@ -53,22 +47,18 @@ namespace aurora::chess
     {
         std::vector<std::pair<Move, std::uint64_t>> result;
         const auto moves = MoveGenerator{}.generate(board);
-        result.reserve(move_count(moves));
+        result.reserve(moves.size());
 
+        Board working = board;
         for (const auto &entry : moves)
         {
-            if (entry.move == 0)
-            {
-                continue;
-            }
-
-            Board working = board;
             if (!working.make_move(entry.move))
             {
                 continue;
             }
 
             result.emplace_back(entry.move, depth <= 1 ? 1 : perft_recursive(working, depth - 1));
+            working.undo_move();
         }
         return result;
     }

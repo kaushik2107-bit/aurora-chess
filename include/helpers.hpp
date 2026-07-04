@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstddef>
 #include <string>
 
 #include "board.hpp"
@@ -35,20 +34,6 @@ namespace aurora::chess
     [[nodiscard]] constexpr bool is_castle(MoveFlag flag) noexcept
     {
         return flag == MoveFlag::KingCastle || flag == MoveFlag::QueenCastle;
-    }
-
-    template <typename MoveList>
-    [[nodiscard]] std::size_t move_count(const MoveList &moves)
-    {
-        std::size_t count = 0;
-        for (const auto &entry : moves)
-        {
-            if (entry.move != 0)
-            {
-                ++count;
-            }
-        }
-        return count;
     }
 
 } // namespace aurora::chess

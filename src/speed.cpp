@@ -14,11 +14,6 @@ namespace aurora::chess
             const auto moves = MoveGenerator{}.generate(board);
             for (const auto &entry : moves)
             {
-                if (entry.move == 0)
-                {
-                    continue;
-                }
-
                 if (!board.make_move(entry.move))
                 {
                     continue;
@@ -41,7 +36,7 @@ namespace aurora::chess
                 if (is_in_check(board, board.side_to_move()))
                 {
                     ++stats.checks;
-                    stats.checkmates += move_count(MoveGenerator{}.generate(board)) == 0 ? 1 : 0;
+                    stats.checkmates += MoveGenerator{}.generate(board).empty() ? 1 : 0;
                 }
                 board.undo_move();
             }

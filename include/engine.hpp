@@ -19,8 +19,9 @@ namespace aurora::chess
         [[nodiscard]] std::string describe() const noexcept;
 
         void set_position(std::string_view fen);
+        bool make_move(Move move);
         [[nodiscard]] const Board &board() const noexcept;
-        [[nodiscard]] std::array<MoveEntry, 256> legal_moves() const;
+        [[nodiscard]] MoveList legal_moves() const;
         [[nodiscard]] std::uint64_t perft(std::size_t depth) const;
 
     private:

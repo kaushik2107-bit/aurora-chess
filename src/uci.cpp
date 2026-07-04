@@ -12,6 +12,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace aurora::chess
 {
@@ -99,7 +100,13 @@ namespace aurora::chess
                    << std::flush;
         }
 
-        [[nodiscard]] std::optional<std::string> position_fen(std::string_view command)
+        struct PositionCommand
+        {
+            std::string fen;
+            std::vector<std::string> moves;
+        };
+
+        [[nodiscard]] std::optional<PositionCommand> parse_position(std::string_view command)
         {
             constexpr std::string_view prefix = "position ";
             if (command.rfind(prefix, 0) != 0)
@@ -107,29 +114,58 @@ namespace aurora::chess
                 return std::nullopt;
             }
 
-            std::string_view value = command.substr(prefix.size());
-            if (value == "startpos")
+            std::string value = trim(std::string{command.substr(prefix.size())});
+            std::string move_text;
+            PositionCommand position;
+            if (value == "startpos" || value.rfind("startpos ", 0) == 0)
             {
-                return std::string{kStartFen};
+                position.fen = std::string{kStartFen};
+                move_text = trim(value.substr(std::string_view{"startpos"}.size()));
+            }
+            else
+            {
+                constexpr std::string_view fen_prefix = "fen ";
+                if (value.rfind(std::string{fen_prefix}, 0) == 0)
+                {
+                    value.erase(0, fen_prefix.size());
+                }
+
+                const auto moves_pos = value.find(" moves ");
+                position.fen = moves_pos == std::string::npos ? value : value.substr(0, moves_pos);
+                move_text = moves_pos == std::string::npos ? std::string{} : value.substr(moves_pos + 1);
             }
 
-            constexpr std::string_view fen_prefix = "fen ";
-            if (value.rfind(fen_prefix, 0) == 0)
+            move_text = trim(move_text);
+            if (move_text.rfind("moves", 0) == 0)
             {
-                value.remove_prefix(fen_prefix.size());
+                move_text.erase(0, std::string_view{"moves"}.size());
+                std::istringstream stream{move_text};
+                std::string move;
+                while (stream >> move)
+                {
+                    position.moves.push_back(move);
+                }
             }
 
-            const auto moves_pos = value.find(" moves ");
-            if (moves_pos != std::string_view::npos)
-            {
-                value = value.substr(0, moves_pos);
-            }
-
-            if (value.empty())
+            position.fen = trim(position.fen);
+            if (position.fen.empty())
             {
                 return std::nullopt;
             }
-            return std::string{value};
+            return position;
+        }
+
+        bool play_uci_move(Engine &engine, std::string_view move_text)
+        {
+            const auto moves = engine.legal_moves();
+            for (const auto &entry : moves)
+            {
+                if (move_to_uci(entry.move) == move_text)
+                {
+                    return engine.make_move(entry.move);
+                }
+            }
+            return false;
         }
 
     } // namespace
@@ -155,9 +191,16 @@ namespace aurora::chess
             }
             else if (command.rfind("position ", 0) == 0)
             {
-                if (const auto fen = position_fen(command))
+                if (const auto position = parse_position(command))
                 {
-                    engine.set_position(*fen);
+                    engine.set_position(position->fen);
+                    for (const auto &move : position->moves)
+                    {
+                        if (!play_uci_move(engine, move))
+                        {
+                            break;
+                        }
+                    }
                 }
             }
             else if (command.rfind("go perft ", 0) == 0)
@@ -175,23 +218,19 @@ namespace aurora::chess
 
                 std::uint64_t nodes = 0;
                 const auto start = std::chrono::steady_clock::now();
-                const auto moves = MoveGenerator{}.generate(engine.board());
+                Board board = engine.board();
+                const auto moves = MoveGenerator{}.generate(board);
                 for (const auto &entry : moves)
                 {
-                    if (entry.move == 0)
+                    if (!board.make_move(entry.move))
                     {
                         continue;
                     }
 
-                    Board next = engine.board();
-                    if (!next.make_move(entry.move))
-                    {
-                        continue;
-                    }
-
-                    const auto count = depth == 1 ? 1 : perft(next, depth - 1);
+                    const auto count = depth == 1 ? 1 : perft(board, depth - 1);
                     output << move_to_uci(entry.move) << ": " << count << '\n' << std::flush;
                     nodes += count;
+                    board.undo_move();
                 }
                 const auto elapsed = std::chrono::steady_clock::now() - start;
                 output << "\nNodes searched: " << nodes << '\n'

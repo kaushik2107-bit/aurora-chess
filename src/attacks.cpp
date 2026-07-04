@@ -15,30 +15,6 @@ namespace aurora::chess
         constexpr std::size_t kRookAttackTableSize = 4096;
         constexpr std::size_t kBishopAttackTableSize = 512;
 
-        // clang-format off
-        constexpr std::array<int, 64> kSquareFiles = {
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-        };
-
-        constexpr std::array<int, 64> kSquareRanks = {
-            0, 0, 0, 0, 0, 0, 0, 0,
-            1, 1, 1, 1, 1, 1, 1, 1,
-            2, 2, 2, 2, 2, 2, 2, 2,
-            3, 3, 3, 3, 3, 3, 3, 3,
-            4, 4, 4, 4, 4, 4, 4, 4,
-            5, 5, 5, 5, 5, 5, 5, 5,
-            6, 6, 6, 6, 6, 6, 6, 6,
-            7, 7, 7, 7, 7, 7, 7, 7,
-        };
-        // clang-format on
-
         enum class Slider
         {
             Bishop,
@@ -51,40 +27,30 @@ namespace aurora::chess
         constexpr std::array<int, 4> kBishopFileSteps = {1, 1, -1, -1};
         constexpr std::array<int, 4> kBishopRankSteps = {1, -1, 1, -1};
 
-        constexpr bool is_on_board(int file, int rank) noexcept
-        {
-            return file >= 0 && file < 8 && rank >= 0 && rank < 8;
-        }
-
-        constexpr Bitboard square_bit(int file, int rank) noexcept
-        {
-            return static_cast<Bitboard>(1) << static_cast<std::size_t>(rank * 8 + file);
-        }
-
         constexpr Bitboard ray_occupancy_mask(Square square, int file_step, int rank_step) noexcept
         {
-            int file = kSquareFiles[static_cast<std::size_t>(square)];
-            int rank = kSquareRanks[static_cast<std::size_t>(square)];
+            const int file = file_of(square);
+            const int rank = rank_of(square);
             Bitboard mask = 0;
-            for (int x = file + file_step, y = rank + rank_step; is_on_board(x, y); x += file_step, y += rank_step)
+            for (int x = file + file_step, y = rank + rank_step; on_board(x, y); x += file_step, y += rank_step)
             {
-                if (!is_on_board(x + file_step, y + rank_step))
+                if (!on_board(x + file_step, y + rank_step))
                 {
                     break;
                 }
-                mask |= square_bit(x, y);
+                mask |= bit(to_square(x, y));
             }
             return mask;
         }
 
         constexpr Bitboard ray_attacks(Square square, Bitboard occupancy, int file_step, int rank_step) noexcept
         {
-            int file = kSquareFiles[static_cast<std::size_t>(square)];
-            int rank = kSquareRanks[static_cast<std::size_t>(square)];
+            const int file = file_of(square);
+            const int rank = rank_of(square);
             Bitboard attacks = 0;
-            for (int x = file + file_step, y = rank + rank_step; is_on_board(x, y); x += file_step, y += rank_step)
+            for (int x = file + file_step, y = rank + rank_step; on_board(x, y); x += file_step, y += rank_step)
             {
-                const Bitboard target = square_bit(x, y);
+                const Bitboard target = bit(to_square(x, y));
                 attacks |= target;
                 if ((occupancy & target) != 0)
                 {
@@ -132,7 +98,7 @@ namespace aurora::chess
         }
 
         template <std::size_t TableSize>
-        void build_attack_table(Square square, Bitboard mask, std::array<Bitboard, TableSize>& table, Slider slider)
+        void build_attack_table(Square square, Bitboard mask, std::array<Bitboard, TableSize> &table, Slider slider)
         {
             const std::size_t entry_count = std::size_t{1} << popcount(mask);
             for (std::size_t index = 0; index < entry_count; ++index)
@@ -148,7 +114,7 @@ namespace aurora::chess
             return static_cast<std::size_t>(_pext_u64(occupancy, mask));
         }
 
-        static const std::array<Bitboard, kSquareCount> rook_occupancy_masks = []()
+        static const std::array<Bitboard, kSquareCount> kRookOccupancyMasks = []()
         {
             std::array<Bitboard, kSquareCount> masks{};
             for (std::size_t square = 0; square < kSquareCount; ++square)
@@ -161,7 +127,7 @@ namespace aurora::chess
             return masks;
         }();
 
-        static const std::array<Bitboard, kSquareCount> bishop_occupancy_masks = []()
+        static const std::array<Bitboard, kSquareCount> kBishopOccupancyMasks = []()
         {
             std::array<Bitboard, kSquareCount> masks{};
             for (std::size_t square = 0; square < kSquareCount; ++square)
@@ -174,23 +140,23 @@ namespace aurora::chess
             return masks;
         }();
 
-        static const std::array<std::array<Bitboard, kRookAttackTableSize>, kSquareCount> rook_attack_tables = []()
+        static const std::array<std::array<Bitboard, kRookAttackTableSize>, kSquareCount> kRookAttackTables = []()
         {
             std::array<std::array<Bitboard, kRookAttackTableSize>, kSquareCount> tables{};
             for (std::size_t square = 0; square < kSquareCount; ++square)
             {
-                build_attack_table(static_cast<Square>(square), rook_occupancy_masks[square], tables[square],
+                build_attack_table(static_cast<Square>(square), kRookOccupancyMasks[square], tables[square],
                                    Slider::Rook);
             }
             return tables;
         }();
 
-        static const std::array<std::array<Bitboard, kBishopAttackTableSize>, kSquareCount> bishop_attack_tables = []()
+        static const std::array<std::array<Bitboard, kBishopAttackTableSize>, kSquareCount> kBishopAttackTables = []()
         {
             std::array<std::array<Bitboard, kBishopAttackTableSize>, kSquareCount> tables{};
             for (std::size_t square = 0; square < kSquareCount; ++square)
             {
-                build_attack_table(static_cast<Square>(square), bishop_occupancy_masks[square], tables[square],
+                build_attack_table(static_cast<Square>(square), kBishopOccupancyMasks[square], tables[square],
                                    Slider::Bishop);
             }
             return tables;
@@ -230,7 +196,7 @@ namespace aurora::chess
                 const Square square = static_cast<Square>(i);
                 const int file = file_of(square);
                 const int rank = rank_of(square);
-                for (const auto& d : deltas)
+                for (const auto &d : deltas)
                 {
                     const int df = d[0];
                     const int dr = d[1];
@@ -265,7 +231,7 @@ namespace aurora::chess
                 const Square square = static_cast<Square>(i);
                 const int file = file_of(square);
                 const int rank = rank_of(square);
-                for (const auto& d : deltas)
+                for (const auto &d : deltas)
                 {
                     const int df = d[0];
                     const int dr = d[1];
@@ -299,13 +265,13 @@ namespace aurora::chess
     Bitboard bishop_attacks(Square square, Bitboard occupancy) noexcept
     {
         const auto index = static_cast<std::size_t>(square);
-        return bishop_attack_tables[index][attack_table_index(occupancy, bishop_occupancy_masks[index])];
+        return kBishopAttackTables[index][attack_table_index(occupancy, kBishopOccupancyMasks[index])];
     }
 
     Bitboard rook_attacks(Square square, Bitboard occupancy) noexcept
     {
         const auto index = static_cast<std::size_t>(square);
-        return rook_attack_tables[index][attack_table_index(occupancy, rook_occupancy_masks[index])];
+        return kRookAttackTables[index][attack_table_index(occupancy, kRookOccupancyMasks[index])];
     }
 
     Bitboard queen_attacks(Square square, Bitboard occupancy) noexcept
@@ -313,7 +279,7 @@ namespace aurora::chess
         return bishop_attacks(square, occupancy) | rook_attacks(square, occupancy);
     }
 
-    Bitboard attackers_to(const Board& board, Square square, Bitboard occupancy, Color by)
+    Bitboard attackers_to(const Board &board, Square square, Bitboard occupancy, Color by)
     {
         const Bitboard by_occupancy = board.occupancy(by) & occupancy;
         return (pawn_attacks(square, ~by) & board.piece_bb(PieceType::Pawn) & by_occupancy) |
@@ -325,12 +291,12 @@ namespace aurora::chess
                (king_attacks(square) & board.piece_bb(PieceType::King) & by_occupancy);
     }
 
-    bool is_square_attacked(const Board& board, Square square, Color by)
+    bool is_square_attacked(const Board &board, Square square, Color by)
     {
         return attackers_to(board, square, board.all_occupancy(), by) != 0;
     }
 
-    bool is_in_check(const Board& board, Color color)
+    bool is_in_check(const Board &board, Color color)
     {
         const Square king = board.king_square(color);
         return king != Square::NoSquare && is_square_attacked(board, king, ~color);

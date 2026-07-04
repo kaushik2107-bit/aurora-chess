@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include "board.hpp"
@@ -14,10 +15,29 @@ namespace aurora::chess
         std::uint16_t score{0};
     };
 
+    class MoveList
+    {
+    public:
+        static constexpr std::size_t kMaxMoves = 256;
+
+        void push(Move move, std::uint16_t score = 0) noexcept;
+        [[nodiscard]] std::size_t size() const noexcept;
+        [[nodiscard]] bool empty() const noexcept;
+
+        [[nodiscard]] MoveEntry *begin() noexcept;
+        [[nodiscard]] MoveEntry *end() noexcept;
+        [[nodiscard]] const MoveEntry *begin() const noexcept;
+        [[nodiscard]] const MoveEntry *end() const noexcept;
+
+    private:
+        std::array<MoveEntry, kMaxMoves> moves_{};
+        std::size_t count_{0};
+    };
+
     class MoveGenerator
     {
     public:
-        std::array<MoveEntry, 256> generate(const Board &board);
+        MoveList generate(const Board &board);
     };
 
 } // namespace aurora::chess
