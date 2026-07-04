@@ -1,6 +1,4 @@
 #include "engine.hpp"
-
-#include "pext.hpp"
 #include "perft.hpp"
 
 #include <string>
@@ -8,20 +6,7 @@
 
 namespace aurora::chess
 {
-    namespace
-    {
-
-        void initialize_engine()
-        {
-            SlidingAttacks::init();
-        }
-
-    } // namespace
-
-    Engine::Engine(std::string_view name) noexcept : name_(name)
-    {
-        initialize_engine();
-    }
+    Engine::Engine(std::string_view name) noexcept : name_(name) {}
 
     std::string_view Engine::name() const noexcept
     {
@@ -43,7 +28,7 @@ namespace aurora::chess
         board_.set_fen(fen);
     }
 
-    const Board &Engine::board() const noexcept
+    const Board& Engine::board() const noexcept
     {
         return board_;
     }

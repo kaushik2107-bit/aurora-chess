@@ -11,7 +11,7 @@ namespace aurora::chess
     [[nodiscard]] Bitboard rook_attacks(Square square, Bitboard occupancy) noexcept;
     [[nodiscard]] Bitboard queen_attacks(Square square, Bitboard occupancy) noexcept;
     [[nodiscard]] Bitboard king_attacks(Square square) noexcept;
-    [[nodiscard]] bool is_square_attacked(const Board &board, Square square, Color by);
-    [[nodiscard]] bool is_in_check(const Board &board, Color color);
+    [[nodiscard]] bool is_square_attacked(const Board& board, Square square, Color by);
+    [[nodiscard]] bool is_in_check(const Board& board, Color color);
 
 } // namespace aurora::chess

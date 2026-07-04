@@ -85,7 +85,6 @@ add_library(aurora_chess STATIC
     src/movegen.cpp
     src/perft.cpp
     src/speed.cpp
-    src/pext.cpp
 )
 
 target_include_directories(aurora_chess PUBLIC

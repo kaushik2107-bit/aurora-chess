@@ -1,6 +1,6 @@
 #include "speed.hpp"
 
-#include "pext.hpp"
+#include "attacks.hpp"
 
 #include <gtest/gtest.h>
 
@@ -9,11 +9,6 @@ namespace
 
     class SpeedTests : public ::testing::Test
     {
-    protected:
-        static void SetUpTestSuite()
-        {
-            aurora::chess::SlidingAttacks::init();
-        }
     };
 
     TEST_F(SpeedTests, ReportsInitialPositionStats)
