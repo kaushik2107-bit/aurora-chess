@@ -1,6 +1,8 @@
 #include "movegen.hpp"
 
 #include "attacks.hpp"
+#include "bitboard.hpp"
+#include "helpers.hpp"
 
 #include <array>
 #include <cstddef>
@@ -10,34 +12,6 @@ namespace aurora::chess
 {
     namespace
     {
-
-        constexpr Bitboard kFileA = 0x0101010101010101ull;
-        constexpr Bitboard kFileH = 0x8080808080808080ull;
-
-        constexpr int file_of(Square square) noexcept
-        {
-            return static_cast<int>(square) & 7;
-        }
-
-        constexpr int rank_of(Square square) noexcept
-        {
-            return static_cast<int>(square) >> 3;
-        }
-
-        constexpr bool on_board(int file, int rank) noexcept
-        {
-            return file >= 0 && file < 8 && rank >= 0 && rank < 8;
-        }
-
-        constexpr Square to_square(int file, int rank) noexcept
-        {
-            return static_cast<Square>(rank * 8 + file);
-        }
-
-        constexpr bool has_castling(CastlingRights rights, CastlingRights flag) noexcept
-        {
-            return (static_cast<int>(rights) & static_cast<int>(flag)) != 0;
-        }
 
         void add_promotions(std::array<MoveEntry, 256> &out, std::size_t &count, Square from, Square to, bool capture)
         {

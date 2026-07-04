@@ -1,5 +1,6 @@
 #include "attacks.hpp"
 
+#include "bitboard.hpp"
 #include "magic.hpp"
 
 #include <array>
@@ -8,29 +9,6 @@ namespace aurora::chess
 {
     namespace
     {
-
-        constexpr Bitboard kFileA = 0x0101010101010101ull;
-        constexpr Bitboard kFileH = 0x8080808080808080ull;
-
-        constexpr int file_of(Square square) noexcept
-        {
-            return static_cast<int>(square) & 7;
-        }
-
-        constexpr int rank_of(Square square) noexcept
-        {
-            return static_cast<int>(square) >> 3;
-        }
-
-        constexpr bool on_board(int file, int rank) noexcept
-        {
-            return file >= 0 && file < 8 && rank >= 0 && rank < 8;
-        }
-
-        constexpr Square to_square(int file, int rank) noexcept
-        {
-            return static_cast<Square>(rank * 8 + file);
-        }
 
         [[nodiscard]] Bitboard pawn_set_attacks(Bitboard pawns, Color color) noexcept
         {
@@ -51,7 +29,18 @@ namespace aurora::chess
     Bitboard knight_attacks(Square square) noexcept
     {
         Bitboard result = 0;
-        constexpr std::array<std::array<int, 2>, 8> deltas{{{1, 2}, {2, 1}, {2, -1}, {1, -2}, {-1, -2}, {-2, -1}, {-2, 1}, {-1, 2}}};
+        // clang-format off
+        constexpr std::array<std::array<int, 2>, 8> deltas{{
+            { 1,  2},
+            { 2,  1},
+            { 2, -1},
+            { 1, -2},
+            {-1, -2},
+            {-2, -1},
+            {-2,  1},
+            {-1,  2},
+        }};
+        // clang-format on
         const int file = file_of(square);
         const int rank = rank_of(square);
         for (const auto &[df, dr] : deltas)
@@ -67,7 +56,18 @@ namespace aurora::chess
     Bitboard king_attacks(Square square) noexcept
     {
         Bitboard result = 0;
-        constexpr std::array<std::array<int, 2>, 8> deltas{{{1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}, {0, 1}}};
+        // clang-format off
+        constexpr std::array<std::array<int, 2>, 8> deltas{{
+            { 1,  1},
+            { 1,  0},
+            { 1, -1},
+            { 0, -1},
+            {-1, -1},
+            {-1,  0},
+            {-1,  1},
+            { 0,  1},
+        }};
+        // clang-format on
         const int file = file_of(square);
         const int rank = rank_of(square);
         for (const auto &[df, dr] : deltas)

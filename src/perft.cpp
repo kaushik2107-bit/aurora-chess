@@ -1,24 +1,12 @@
 #include "perft.hpp"
 
+#include "helpers.hpp"
 #include "movegen.hpp"
 
 namespace aurora::chess
 {
     namespace
     {
-
-        [[nodiscard]] std::size_t move_count(const std::array<MoveEntry, 256> &moves)
-        {
-            std::size_t count = 0;
-            for (const auto &entry : moves)
-            {
-                if (entry.move != 0)
-                {
-                    ++count;
-                }
-            }
-            return count;
-        }
 
         [[nodiscard]] std::uint64_t perft_recursive(const Board &board, std::size_t depth)
         {

@@ -1,10 +1,9 @@
 #include "uci.hpp"
 
+#include "helpers.hpp"
 #include "perft.hpp"
 #include "speed.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
@@ -15,16 +14,6 @@ namespace aurora::chess
 {
     namespace
     {
-
-        [[nodiscard]] std::string trim(std::string value)
-        {
-            auto begin = std::find_if(value.begin(), value.end(), [](unsigned char ch)
-                                      { return std::isspace(ch) == 0; });
-            auto end = std::find_if(value.rbegin(), value.rend(), [](unsigned char ch)
-                                    { return std::isspace(ch) == 0; })
-                           .base();
-            return std::string(begin, end);
-        }
 
         [[nodiscard]] std::string square_to_string(Square square)
         {

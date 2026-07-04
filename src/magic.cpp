@@ -9,139 +9,29 @@ namespace aurora::chess
     namespace
     {
 
+        // clang-format off
         constexpr std::array<int, 64> kFile = {
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
         };
 
         constexpr std::array<int, 64> kRank = {
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            1,
-            1,
-            1,
-            1,
-            1,
-            1,
-            1,
-            2,
-            2,
-            2,
-            2,
-            2,
-            2,
-            2,
-            2,
-            3,
-            3,
-            3,
-            3,
-            3,
-            3,
-            3,
-            3,
-            4,
-            4,
-            4,
-            4,
-            4,
-            4,
-            4,
-            4,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            6,
-            6,
-            6,
-            6,
-            6,
-            6,
-            6,
-            6,
-            7,
-            7,
-            7,
-            7,
-            7,
-            7,
-            7,
-            7,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            1, 1, 1, 1, 1, 1, 1, 1,
+            2, 2, 2, 2, 2, 2, 2, 2,
+            3, 3, 3, 3, 3, 3, 3, 3,
+            4, 4, 4, 4, 4, 4, 4, 4,
+            5, 5, 5, 5, 5, 5, 5, 5,
+            6, 6, 6, 6, 6, 6, 6, 6,
+            7, 7, 7, 7, 7, 7, 7, 7,
         };
+        // clang-format on
 
         constexpr std::array<int, 4> kRookDirectionsX = {1, -1, 0, 0};
         constexpr std::array<int, 4> kRookDirectionsY = {0, 0, 1, -1};
@@ -200,10 +90,12 @@ namespace aurora::chess
 
         for (std::size_t square = 0; square < kBoardSize; ++square)
         {
-            rook_masks_[square] = ray_mask(static_cast<Square>(square), 1, 0) | ray_mask(static_cast<Square>(square), -1, 0) |
-                                  ray_mask(static_cast<Square>(square), 0, 1) | ray_mask(static_cast<Square>(square), 0, -1);
-            bishop_masks_[square] = ray_mask(static_cast<Square>(square), 1, 1) | ray_mask(static_cast<Square>(square), 1, -1) |
-                                    ray_mask(static_cast<Square>(square), -1, 1) | ray_mask(static_cast<Square>(square), -1, -1);
+            rook_masks_[square] =
+                ray_mask(static_cast<Square>(square), 1, 0) | ray_mask(static_cast<Square>(square), -1, 0) |
+                ray_mask(static_cast<Square>(square), 0, 1) | ray_mask(static_cast<Square>(square), 0, -1);
+            bishop_masks_[square] =
+                ray_mask(static_cast<Square>(square), 1, 1) | ray_mask(static_cast<Square>(square), 1, -1) |
+                ray_mask(static_cast<Square>(square), -1, 1) | ray_mask(static_cast<Square>(square), -1, -1);
         }
 
         initialized_ = true;
@@ -211,7 +103,6 @@ namespace aurora::chess
 
     Bitboard MagicBitboards::rook_moves(Square square, Bitboard occupancy) noexcept
     {
-        init();
         Bitboard attacks = 0;
         for (std::size_t i = 0; i < kRookDirectionsX.size(); ++i)
         {
@@ -222,7 +113,6 @@ namespace aurora::chess
 
     Bitboard MagicBitboards::bishop_moves(Square square, Bitboard occupancy) noexcept
     {
-        init();
         Bitboard attacks = 0;
         for (std::size_t i = 0; i < kBishopDirectionsX.size(); ++i)
         {

@@ -1,37 +1,13 @@
 #include "speed.hpp"
 
 #include "attacks.hpp"
+#include "helpers.hpp"
 #include "movegen.hpp"
 
 namespace aurora::chess
 {
     namespace
     {
-
-        [[nodiscard]] bool is_capture(MoveFlag flag) noexcept
-        {
-            return flag == MoveFlag::Capture || flag == MoveFlag::EnPassant ||
-                   flag == MoveFlag::KnightPromotionCapture || flag == MoveFlag::BishopPromotionCapture ||
-                   flag == MoveFlag::RookPromotionCapture || flag == MoveFlag::QueenPromotionCapture;
-        }
-
-        [[nodiscard]] bool is_castle(MoveFlag flag) noexcept
-        {
-            return flag == MoveFlag::KingCastle || flag == MoveFlag::QueenCastle;
-        }
-
-        [[nodiscard]] std::size_t move_count(const std::array<MoveEntry, 256> &moves)
-        {
-            std::size_t count = 0;
-            for (const auto &entry : moves)
-            {
-                if (entry.move != 0)
-                {
-                    ++count;
-                }
-            }
-            return count;
-        }
 
         void collect_speed_stats(const Board &board, std::size_t depth, SpeedStats &stats)
         {
