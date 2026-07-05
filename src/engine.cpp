@@ -10,7 +10,9 @@ namespace aurora::chess
 {
     Engine::Engine(std::string_view name) : name_(name), ttable_(1 << 20), threads_(1)
     {
-        [[maybe_unused]] const bool loaded = evaluator_.load_default();
+        const bool loaded = evaluator_.load_default();
+        // Enable NNUE by default when a network is successfully loaded.
+        use_nnue_ = loaded;
     }
 
     std::string_view Engine::name() const noexcept

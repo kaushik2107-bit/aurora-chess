@@ -18,7 +18,8 @@ namespace aurora::chess
         [[nodiscard]] bool equal_uci_name(std::string_view lhs, std::string_view rhs) noexcept
         {
             return lhs.size() == rhs.size() && std::equal(lhs.begin(), lhs.end(), rhs.begin(),
-                                                          [](char a, char b) {
+                                                          [](char a, char b)
+                                                          {
                                                               return std::tolower(static_cast<unsigned char>(a)) ==
                                                                      std::tolower(static_cast<unsigned char>(b));
                                                           });
@@ -201,7 +202,7 @@ namespace aurora::chess
         });
         options_.push_back(Entry{
             "Use NNUE",
-            UciOption::check(false),
+            UciOption::check(true),
             [](Engine& engine, const UciOption& option) { engine.set_use_nnue(option.as_bool()); },
         });
         options_.push_back(Entry{
