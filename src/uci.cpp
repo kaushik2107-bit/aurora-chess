@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -152,6 +153,15 @@ namespace aurora::chess
             output << '\n' << std::flush;
         }
 
+        [[nodiscard]] Move ponder_move_from_result(const SearchResult& result, Move best_move) noexcept
+        {
+            if (best_move == 0 || result.pv.size() < 2 || result.pv.front() != best_move)
+            {
+                return 0;
+            }
+            return result.pv[1];
+        }
+
         void print_board(std::ostream& output, const Board& board)
         {
             for (int rank = 7; rank >= 0; --rank)
@@ -187,6 +197,7 @@ namespace aurora::chess
             GoMode mode{GoMode::Search};
             std::size_t depth{4};
             std::size_t quiescence_depth{8};
+            bool depth_set{false};
             bool ponder{false};
             bool infinite{false};
             std::optional<int> white_time;
@@ -279,6 +290,7 @@ namespace aurora::chess
                     if (const auto depth = next_size())
                     {
                         go.depth = *depth;
+                        go.depth_set = true;
                     }
                 }
                 else if (word == "speed")
@@ -287,6 +299,7 @@ namespace aurora::chess
                     if (const auto depth = next_size())
                     {
                         go.depth = *depth;
+                        go.depth_set = true;
                     }
                 }
                 else if (word == "depth")
@@ -294,6 +307,7 @@ namespace aurora::chess
                     if (const auto depth = next_size())
                     {
                         go.depth = *depth;
+                        go.depth_set = true;
                     }
                 }
                 else if (word == "wtime")
@@ -425,16 +439,25 @@ namespace aurora::chess
 
             SearchController() = default;
 
-            void start(Engine& engine, std::ostream& output, std::mutex& output_mutex, GoCommand go)
+            void start(Engine& engine, std::ostream& output, std::mutex& output_mutex, GoCommand go,
+                       bool ponder_enabled)
             {
                 stop_and_wait();
                 stop_.store(false, std::memory_order_relaxed);
-                infinite_ = go.infinite || go.ponder;
+                const bool ponder_search = go.ponder && ponder_enabled;
+                {
+                    std::lock_guard lock{mutex_};
+                    pondering_ = ponder_search;
+                    ponder_released_ = !ponder_search;
+                    infinite_ = go.infinite || ponder_search;
+                }
                 worker_ = std::thread(
-                    [this, &engine, &output, &output_mutex, go]
+                    [this, &engine, &output, &output_mutex, go, ponder_enabled, ponder_search]
                     {
+                        constexpr std::size_t kOpenEndedSearchDepth = 64;
                         SearchLimits limits;
-                        limits.depth = go.depth;
+                        limits.depth =
+                            (go.infinite || ponder_search) && !go.depth_set ? kOpenEndedSearchDepth : go.depth;
                         limits.quiescence_depth = go.quiescence_depth;
                         limits.stop = &stop_;
                         const auto search_start = std::chrono::steady_clock::now();
@@ -445,6 +468,7 @@ namespace aurora::chess
                         };
 
                         const auto result = engine.search(limits);
+                        wait_for_ponder_release();
                         Move best_move = result.best_move;
                         if (best_move == 0)
                         {
@@ -454,25 +478,37 @@ namespace aurora::chess
                                 best_move = moves.begin()->move;
                             }
                         }
+                        const Move ponder_move = ponder_enabled ? ponder_move_from_result(result, best_move) : 0;
                         std::lock_guard lock{output_mutex};
-                        output << "bestmove " << (best_move == 0 ? "0000" : move_to_uci(best_move)) << '\n'
-                               << std::flush;
+                        output << "bestmove " << (best_move == 0 ? "0000" : move_to_uci(best_move));
+                        if (ponder_move != 0)
+                        {
+                            output << " ponder " << move_to_uci(ponder_move);
+                        }
+                        output << '\n' << std::flush;
                     });
             }
 
             void stop_and_wait()
             {
                 stop_.store(true, std::memory_order_relaxed);
+                release_ponder();
                 wait();
                 stop_.store(false, std::memory_order_relaxed);
             }
 
+            void ponderhit()
+            {
+                release_ponder();
+            }
+
             void wait_or_stop_for_quit()
             {
-                if (infinite_)
+                if (is_open_ended())
                 {
                     stop_.store(true, std::memory_order_relaxed);
                 }
+                release_ponder();
                 wait();
                 stop_.store(false, std::memory_order_relaxed);
             }
@@ -483,19 +519,49 @@ namespace aurora::chess
                 {
                     worker_.join();
                 }
+                std::lock_guard lock{mutex_};
                 infinite_ = false;
+                pondering_ = false;
+                ponder_released_ = true;
             }
 
         private:
+            [[nodiscard]] bool is_open_ended() const
+            {
+                std::lock_guard lock{mutex_};
+                return infinite_ || pondering_;
+            }
+
+            void release_ponder()
+            {
+                {
+                    std::lock_guard lock{mutex_};
+                    ponder_released_ = true;
+                    pondering_ = false;
+                    infinite_ = false;
+                }
+                cv_.notify_all();
+            }
+
+            void wait_for_ponder_release()
+            {
+                std::unique_lock lock{mutex_};
+                cv_.wait(lock, [&] { return ponder_released_ || stop_.load(std::memory_order_relaxed); });
+            }
+
             std::atomic_bool stop_{false};
+            mutable std::mutex mutex_;
+            std::condition_variable cv_;
             std::thread worker_;
             bool infinite_{false};
+            bool pondering_{false};
+            bool ponder_released_{true};
         };
 
         void run_search_command(SearchController& search, Engine& engine, std::ostream& output,
-                                std::mutex& output_mutex, const GoCommand& go)
+                                std::mutex& output_mutex, const GoCommand& go, const UciOptions& options)
         {
-            search.start(engine, output, output_mutex, go);
+            search.start(engine, output, output_mutex, go, options.ponder());
         }
 
     } // namespace
@@ -588,13 +654,17 @@ namespace aurora::chess
                     run_speed_command(engine, output, go.depth);
                     break;
                 case GoMode::Search:
-                    run_search_command(search, engine, output, output_mutex, go);
+                    run_search_command(search, engine, output, output_mutex, go, options);
                     break;
                 }
             }
-            else if (command == "stop" || command == "ponderhit")
+            else if (command == "stop")
             {
                 search.stop_and_wait();
+            }
+            else if (command == "ponderhit")
+            {
+                search.ponderhit();
             }
             else if (command == "quit")
             {

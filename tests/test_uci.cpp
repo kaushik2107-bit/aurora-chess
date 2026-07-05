@@ -67,6 +67,7 @@ namespace
         EXPECT_NE(output.str().find("option name Clear Hash type button"), std::string::npos);
         EXPECT_NE(output.str().find("option name Ponder type check"), std::string::npos);
         EXPECT_NE(output.str().find("option name Threads type spin"), std::string::npos);
+        EXPECT_NE(output.str().find("Threads=1"), std::string::npos);
         EXPECT_NE(output.str().find("uciok"), std::string::npos);
     }
 
@@ -97,6 +98,43 @@ namespace
         EXPECT_NO_THROW(aurora::chess::run_uci_loop(engine, input, output));
         EXPECT_NE(output.str().find("bestmove "), std::string::npos);
         EXPECT_EQ(output.str().find("bestmove 0000"), std::string::npos);
+    }
+
+    TEST(UciTests, PonderWaitsForPonderhitBeforeBestMove)
+    {
+        aurora::chess::Engine engine{"Aurora"};
+        std::istringstream input{"setoption name Ponder value true\n"
+                                 "position startpos\n"
+                                 "go ponder depth 1\n"
+                                 "isready\n"
+                                 "ponderhit\n"
+                                 "quit\n"};
+        std::ostringstream output;
+
+        EXPECT_NO_THROW(aurora::chess::run_uci_loop(engine, input, output));
+
+        const std::string text = output.str();
+        const auto ready = text.find("readyok");
+        const auto best = text.find("bestmove ");
+        ASSERT_NE(ready, std::string::npos);
+        ASSERT_NE(best, std::string::npos);
+        EXPECT_LT(ready, best);
+    }
+
+    TEST(UciTests, PrintsPonderMoveWhenPonderIsEnabled)
+    {
+        aurora::chess::Engine engine{"Aurora"};
+        std::istringstream input{"setoption name Ponder value true\n"
+                                 "position startpos\n"
+                                 "go depth 3\n"
+                                 "quit\n"};
+        std::ostringstream output;
+
+        EXPECT_NO_THROW(aurora::chess::run_uci_loop(engine, input, output));
+
+        const std::string text = output.str();
+        EXPECT_NE(text.find("bestmove "), std::string::npos);
+        EXPECT_NE(text.find(" ponder "), std::string::npos);
     }
 
     TEST(UciTests, PrintsOneInfoLinePerDepthWithThreads)

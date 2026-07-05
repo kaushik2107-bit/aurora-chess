@@ -13,6 +13,13 @@ namespace
         EXPECT_EQ(engine.version(), "0.1.0");
     }
 
+    TEST(EngineTests, StartsWithOneSearchThread)
+    {
+        const aurora::chess::Engine engine{"Aurora"};
+
+        EXPECT_EQ(engine.thread_count(), 1u);
+    }
+
     TEST(EngineTests, ParsesTheInitialPosition)
     {
         aurora::chess::Engine engine{"Aurora"};

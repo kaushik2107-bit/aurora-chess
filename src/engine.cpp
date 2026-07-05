@@ -5,12 +5,10 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
-#include <thread>
 
 namespace aurora::chess
 {
-    Engine::Engine(std::string_view name)
-        : name_(name), ttable_(1 << 20), threads_(std::max<std::size_t>(1, std::thread::hardware_concurrency()))
+    Engine::Engine(std::string_view name) : name_(name), ttable_(1 << 20), threads_(1)
     {
         [[maybe_unused]] const bool loaded = evaluator_.load_default();
     }
