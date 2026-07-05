@@ -71,4 +71,50 @@ namespace aurora::chess::test
         EXPECT_EQ(board.key(), key);
     }
 
+    TEST(BoardTests, DetectsFiftyMoveRuleDraw)
+    {
+        const Board board{"4k2r/8/8/8/8/8/8/R3K3 w - - 100 1"};
+
+        EXPECT_TRUE(board.is_fifty_move_rule_draw());
+        EXPECT_EQ(board.draw_reason(), DrawReason::FiftyMoveRule);
+        EXPECT_TRUE(board.is_draw());
+    }
+
+    TEST(BoardTests, CountsThreefoldRepetition)
+    {
+        Board board{"6nk/8/8/8/8/8/8/KN6 w - - 0 1"};
+
+        EXPECT_EQ(board.repetition_count(), 1u);
+        EXPECT_FALSE(board.is_repetition());
+
+        ASSERT_TRUE(board.make_move(make_move(Square::B1, Square::C3)));
+        ASSERT_TRUE(board.make_move(make_move(Square::G8, Square::F6)));
+        ASSERT_TRUE(board.make_move(make_move(Square::C3, Square::B1)));
+        ASSERT_TRUE(board.make_move(make_move(Square::F6, Square::G8)));
+
+        EXPECT_EQ(board.repetition_count(), 2u);
+        EXPECT_FALSE(board.is_repetition());
+
+        ASSERT_TRUE(board.make_move(make_move(Square::B1, Square::C3)));
+        ASSERT_TRUE(board.make_move(make_move(Square::G8, Square::F6)));
+        ASSERT_TRUE(board.make_move(make_move(Square::C3, Square::B1)));
+        ASSERT_TRUE(board.make_move(make_move(Square::F6, Square::G8)));
+
+        EXPECT_EQ(board.repetition_count(), 3u);
+        EXPECT_TRUE(board.is_repetition());
+        EXPECT_EQ(board.draw_reason(), DrawReason::Repetition);
+    }
+
+    TEST(BoardTests, DetectsInsufficientMaterial)
+    {
+        EXPECT_TRUE(Board{"8/8/8/8/8/8/8/K6k w - - 0 1"}.has_insufficient_material());
+        EXPECT_TRUE(Board{"8/8/8/8/8/8/8/KB5k w - - 0 1"}.has_insufficient_material());
+        EXPECT_TRUE(Board{"8/8/8/8/8/8/8/KN5k w - - 0 1"}.has_insufficient_material());
+        EXPECT_TRUE(Board{"7k/8/7b/8/8/8/8/K1B5 w - - 0 1"}.has_insufficient_material());
+
+        EXPECT_FALSE(Board{"7k/8/6b1/8/8/8/8/K1B5 w - - 0 1"}.has_insufficient_material());
+        EXPECT_FALSE(Board{"7k/8/8/8/8/8/8/KNN5 w - - 0 1"}.has_insufficient_material());
+        EXPECT_FALSE(Board{"7k/8/8/8/8/8/8/KR6 w - - 0 1"}.has_insufficient_material());
+    }
+
 } // namespace aurora::chess::test

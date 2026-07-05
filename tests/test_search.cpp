@@ -29,6 +29,20 @@ namespace
         mutable std::atomic_size_t evaluations_{0};
     };
 
+    class ConstantEvaluator final : public aurora::chess::Evaluator
+    {
+    public:
+        explicit ConstantEvaluator(aurora::chess::Score score) : score_(score) {}
+
+        [[nodiscard]] aurora::chess::Score evaluate(const aurora::chess::Board&) const noexcept override
+        {
+            return score_;
+        }
+
+    private:
+        aurora::chess::Score score_{0};
+    };
+
     TEST(SearchTests, FindsALegalMoveFromInitialPosition)
     {
         const aurora::chess::Board board;
@@ -55,6 +69,19 @@ namespace
 
         EXPECT_EQ(result.best_move, 0);
         EXPECT_LT(result.score, -aurora::chess::kMateScore + 10);
+    }
+
+    TEST(SearchTests, ScoresRuleDrawAsNeutral)
+    {
+        const aurora::chess::Board board{"4k2r/8/8/8/8/8/8/R3K3 w - - 100 1"};
+        const ConstantEvaluator evaluator{900};
+        aurora::chess::TranspositionTable table{};
+
+        const auto result = aurora::chess::search(board, aurora::chess::SearchLimits{.depth = 2}, table, evaluator);
+
+        EXPECT_EQ(result.score, 0);
+        EXPECT_EQ(result.depth, 2u);
+        EXPECT_EQ(result.best_move, 0);
     }
 
     TEST(SearchTests, RecordsEachIterativeDeepeningStep)

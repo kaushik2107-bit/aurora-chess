@@ -14,6 +14,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -132,13 +133,37 @@ namespace aurora::chess
                    << std::flush;
         }
 
+        [[nodiscard]] bool is_uci_mate_score(Score score) noexcept
+        {
+            constexpr Score kMateScoreThreshold = kMateScore - 512;
+            return score <= -kMateScoreThreshold || score >= kMateScoreThreshold;
+        }
+
+        [[nodiscard]] int mate_score_to_uci_moves(Score score) noexcept
+        {
+            const int plies = std::max(0, kMateScore - std::abs(score));
+            return score > 0 ? (plies + 1) / 2 : -(plies / 2);
+        }
+
+        void print_uci_score(std::ostream& output, Score score)
+        {
+            if (is_uci_mate_score(score))
+            {
+                output << "score mate " << mate_score_to_uci_moves(score);
+                return;
+            }
+
+            output << "score cp " << score;
+        }
+
         void print_search_info(std::ostream& output, const SearchIteration& iteration,
                                std::chrono::steady_clock::duration elapsed)
         {
             const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-            output << "info depth " << iteration.depth << " seldepth " << iteration.selective_depth << " score cp "
-                   << iteration.score << " nodes " << iteration.nodes << " nps "
-                   << nodes_per_second(iteration.nodes, elapsed) << " time " << std::max<std::int64_t>(1, elapsed_ms);
+            output << "info depth " << iteration.depth << " seldepth " << iteration.selective_depth << ' ';
+            print_uci_score(output, iteration.score);
+            output << " nodes " << iteration.nodes << " nps " << nodes_per_second(iteration.nodes, elapsed)
+                   << " time " << std::max<std::int64_t>(1, elapsed_ms);
             if (!iteration.pv.empty())
             {
                 output << " pv";

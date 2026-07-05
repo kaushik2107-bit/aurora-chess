@@ -146,6 +146,14 @@ namespace aurora::chess
         QueenPromotionCapture = 15,
     };
 
+    enum class DrawReason : std::uint8_t
+    {
+        None = 0,
+        FiftyMoveRule,
+        Repetition,
+        InsufficientMaterial,
+    };
+
     constexpr Color operator~(Color color) noexcept
     {
         return color == Color::White ? Color::Black : Color::White;
@@ -336,6 +344,12 @@ namespace aurora::chess
         [[nodiscard]] Bitboard pinned() const noexcept;
         [[nodiscard]] Bitboard pinners() const noexcept;
         [[nodiscard]] const DirtyPiece& last_dirty_piece() const noexcept;
+        [[nodiscard]] std::uint32_t repetition_count() const noexcept;
+        [[nodiscard]] bool is_repetition(std::uint32_t occurrences = 3) const noexcept;
+        [[nodiscard]] bool is_fifty_move_rule_draw() const noexcept;
+        [[nodiscard]] bool has_insufficient_material() const noexcept;
+        [[nodiscard]] DrawReason draw_reason() const noexcept;
+        [[nodiscard]] bool is_draw() const noexcept;
 
         [[nodiscard]] bool legal(Move move) const;
         bool make_move(Move move);
@@ -355,6 +369,7 @@ namespace aurora::chess
             std::uint32_t halfmove_clock{0};
             std::uint32_t fullmove_number{1};
             Color side_to_move{Color::White};
+            Key key{0};
             DirtyPiece dirty_piece{};
         };
 
@@ -379,6 +394,7 @@ namespace aurora::chess
         Key key_{0};
         std::array<UndoState, 256> history_{};
         std::size_t history_size_{0};
+        std::size_t null_move_depth_{0};
     };
 
 } // namespace aurora::chess

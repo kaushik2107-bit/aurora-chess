@@ -445,6 +445,11 @@ namespace aurora::chess
         SearchIteration SearchWorker::search_root(Board& board, std::size_t depth, Move previous_best, Score alpha,
                                                   Score beta)
         {
+            if (board.is_draw())
+            {
+                return SearchIteration{0, {}, 0, state_.nodes, depth, state_.selective_depth};
+            }
+
             Move root_tt_move = 0;
             if (const auto root_entry = state_.table.probe(board.key()))
             {
@@ -561,6 +566,12 @@ namespace aurora::chess
             {
                 pv.clear();
                 return evaluate(board);
+            }
+
+            if (board.is_draw())
+            {
+                pv.clear();
+                return 0;
             }
 
             if (depth == 0)
@@ -864,6 +875,12 @@ namespace aurora::chess
             {
                 pv.clear();
                 return evaluate(board);
+            }
+
+            if (board.is_draw())
+            {
+                pv.clear();
+                return 0;
             }
 
             count_node();

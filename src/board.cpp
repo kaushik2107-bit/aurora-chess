@@ -5,6 +5,7 @@
 #include "helpers.hpp"
 #include "zobrist.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <sstream>
@@ -200,6 +201,7 @@ namespace aurora::chess
         fullmove_number_ = 1;
         key_ = 0;
         history_size_ = 0;
+        null_move_depth_ = 0;
     }
 
     void Board::set_piece(Piece piece, Square square)
@@ -460,6 +462,109 @@ namespace aurora::chess
         return history_size_ == 0 ? kEmptyDirtyPiece : history_[history_size_ - 1].dirty_piece;
     }
 
+    std::uint32_t Board::repetition_count() const noexcept
+    {
+        std::uint32_t count = 1;
+        if (null_move_depth_ != 0 || history_size_ < 4 || halfmove_clock_ < 4)
+        {
+            return count;
+        }
+
+        const std::size_t reversible_plies = std::min<std::size_t>(history_size_, halfmove_clock_);
+        for (std::size_t offset = 1; offset < reversible_plies; offset += 2)
+        {
+            const UndoState& state = history_[history_size_ - 1 - offset];
+            if (state.null_move)
+            {
+                break;
+            }
+            if (state.key == key_)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    bool Board::is_repetition(std::uint32_t occurrences) const noexcept
+    {
+        if (occurrences <= 1)
+        {
+            return true;
+        }
+        return repetition_count() >= occurrences;
+    }
+
+    bool Board::is_fifty_move_rule_draw() const noexcept
+    {
+        return null_move_depth_ == 0 && halfmove_clock_ >= 100;
+    }
+
+    bool Board::has_insufficient_material() const noexcept
+    {
+        if (piece_bb(PieceType::Pawn) != 0 || piece_bb(PieceType::Rook) != 0 || piece_bb(PieceType::Queen) != 0)
+        {
+            return false;
+        }
+
+        const Bitboard knights = piece_bb(PieceType::Knight);
+        const Bitboard bishops = piece_bb(PieceType::Bishop);
+        const std::uint32_t minor_count = popcount(knights | bishops);
+        if (minor_count <= 1)
+        {
+            return true;
+        }
+
+        if (knights != 0)
+        {
+            return false;
+        }
+
+        bool light_square_bishop = false;
+        bool dark_square_bishop = false;
+        Bitboard remaining = bishops;
+        while (remaining != 0)
+        {
+            const auto square = static_cast<Square>(lsb_index(remaining));
+            if (((file_of(square) + rank_of(square)) & 1) == 0)
+            {
+                dark_square_bishop = true;
+            }
+            else
+            {
+                light_square_bishop = true;
+            }
+            if (light_square_bishop && dark_square_bishop)
+            {
+                return false;
+            }
+            remaining &= remaining - 1;
+        }
+        return true;
+    }
+
+    DrawReason Board::draw_reason() const noexcept
+    {
+        if (is_fifty_move_rule_draw())
+        {
+            return DrawReason::FiftyMoveRule;
+        }
+        if (is_repetition())
+        {
+            return DrawReason::Repetition;
+        }
+        if (has_insufficient_material())
+        {
+            return DrawReason::InsufficientMaterial;
+        }
+        return DrawReason::None;
+    }
+
+    bool Board::is_draw() const noexcept
+    {
+        return draw_reason() != DrawReason::None;
+    }
+
     void Board::update_state() noexcept
     {
         checkers_ = 0;
@@ -633,6 +738,7 @@ namespace aurora::chess
                                               halfmove_clock_,
                                               fullmove_number_,
                                               side_to_move_,
+                                              key_,
                                               dirty};
 
         if (moving_type == PieceType::King)
@@ -756,9 +862,11 @@ namespace aurora::chess
                                               en_passant_square_,
                                               halfmove_clock_,
                                               fullmove_number_,
-                                              side_to_move_};
+                                              side_to_move_,
+                                              key_};
 
         en_passant_square_ = Square::NoSquare;
+        ++null_move_depth_;
         ++halfmove_clock_;
         if (us == Color::Black)
         {
@@ -784,6 +892,10 @@ namespace aurora::chess
             halfmove_clock_ = state.halfmove_clock;
             fullmove_number_ = state.fullmove_number;
             side_to_move_ = state.side_to_move;
+            if (null_move_depth_ != 0)
+            {
+                --null_move_depth_;
+            }
             update_state();
             return true;
         }

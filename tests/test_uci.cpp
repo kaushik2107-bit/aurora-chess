@@ -54,6 +54,18 @@ namespace
         EXPECT_NE(output.str().find("bestmove "), std::string::npos);
     }
 
+    TEST(UciTests, ReportsMateScore)
+    {
+        aurora::chess::Engine engine{"Aurora"};
+        std::istringstream input{"position fen 7k/6pp/8/5K2/8/8/8/1Q6 w - - 0 1\n"
+                                 "go depth 1\n"
+                                 "quit\n"};
+        std::ostringstream output;
+
+        EXPECT_NO_THROW(aurora::chess::run_uci_loop(engine, input, output));
+        EXPECT_NE(output.str().find("score mate 1"), std::string::npos);
+    }
+
     TEST(UciTests, ReportsUciOptions)
     {
         aurora::chess::Engine engine{"Aurora"};
