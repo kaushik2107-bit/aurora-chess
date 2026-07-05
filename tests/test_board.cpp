@@ -57,4 +57,18 @@ namespace aurora::chess::test
         EXPECT_NE(white_to_move.key(), black_to_move.key());
     }
 
+    TEST(BoardTests, NullMoveCanBeUndone)
+    {
+        Board board;
+        const std::string fen = board.fen();
+        const Key key = board.key();
+
+        ASSERT_TRUE(board.make_null_move());
+        EXPECT_EQ(board.side_to_move(), Color::Black);
+
+        ASSERT_TRUE(board.undo_move());
+        EXPECT_EQ(board.fen(), fen);
+        EXPECT_EQ(board.key(), key);
+    }
+
 } // namespace aurora::chess::test

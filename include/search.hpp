@@ -33,6 +33,7 @@ namespace aurora::chess
         std::size_t depth{1};
         std::size_t quiescence_depth{8};
         std::size_t threads{1};
+        std::size_t worker_id{0};
         std::atomic_bool* stop{nullptr};
         ThreadPool* thread_pool{nullptr};
         std::function<void(const SearchIteration&)> on_iteration{};

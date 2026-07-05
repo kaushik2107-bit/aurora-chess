@@ -26,6 +26,7 @@ namespace aurora::chess
         [[nodiscard]] std::size_t size() const noexcept;
 
         void parallel_for(std::size_t task_count, const std::function<void(std::size_t)>& task);
+        void run_with_workers(const std::function<void(std::size_t)>& task);
         void wait_for_search_finished() const;
 
     private:

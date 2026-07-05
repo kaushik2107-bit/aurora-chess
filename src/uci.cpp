@@ -508,8 +508,10 @@ namespace aurora::chess
                         limits.depth = go.depth;
                         limits.quiescence_depth = go.quiescence_depth;
                         limits.stop = &stop_;
-                        limits.on_iteration = [&output, &output_mutex](const SearchIteration& iteration)
+                        std::optional<SearchIteration> last_reported;
+                        limits.on_iteration = [&output, &output_mutex, &last_reported](const SearchIteration& iteration)
                         {
+                            last_reported = iteration;
                             std::lock_guard lock{output_mutex};
                             print_search_info(output, iteration);
                         };
@@ -525,6 +527,19 @@ namespace aurora::chess
                             }
                         }
                         std::lock_guard lock{output_mutex};
+                        if (!result.iterations.empty())
+                        {
+                            const SearchIteration& final_iteration = result.iterations.back();
+                            const bool already_reported = last_reported.has_value() &&
+                                                          last_reported->best_move == final_iteration.best_move &&
+                                                          last_reported->score == final_iteration.score &&
+                                                          last_reported->depth == final_iteration.depth &&
+                                                          last_reported->pv == final_iteration.pv;
+                            if (!already_reported)
+                            {
+                                print_search_info(output, final_iteration);
+                            }
+                        }
                         output << "bestmove " << (best_move == 0 ? "0000" : move_to_uci(best_move)) << '\n'
                                << std::flush;
                     });

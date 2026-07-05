@@ -151,6 +151,22 @@ namespace aurora::chess
         }
     }
 
+    void ThreadPool::run_with_workers(const std::function<void(std::size_t)>& task)
+    {
+        std::unique_lock resize_lock{resize_mutex_};
+        for (std::size_t index = 0; index < workers_.size(); ++index)
+        {
+            workers_[index]->run_custom_job([&, id = index + 1] { task(id); });
+        }
+
+        task(0);
+
+        for (const auto& worker : workers_)
+        {
+            worker->wait_for_search_finished();
+        }
+    }
+
     void ThreadPool::wait_for_search_finished() const
     {
         std::lock_guard lock{resize_mutex_};

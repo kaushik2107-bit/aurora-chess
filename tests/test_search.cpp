@@ -53,13 +53,16 @@ namespace
         EXPECT_GE(result.selective_depth, result.depth);
     }
 
-    TEST(SearchTests, SupportsMultipleRootWorkers)
+    TEST(SearchTests, SupportsLazySmpWorkers)
     {
         const aurora::chess::Board board;
         aurora::chess::TranspositionTable table{};
+        std::atomic_size_t reported_iterations{0};
         aurora::chess::SearchLimits limits;
         limits.depth = 2;
         limits.threads = 2;
+        limits.on_iteration = [&reported_iterations](const aurora::chess::SearchIteration&)
+        { reported_iterations.fetch_add(1, std::memory_order_relaxed); };
 
         const auto result = aurora::chess::search(board, limits, table);
         const auto moves = aurora::chess::MoveGenerator{}.generate(board);
@@ -73,6 +76,7 @@ namespace
         EXPECT_TRUE(found);
         EXPECT_EQ(result.depth, 2u);
         EXPECT_GT(result.nodes, 0u);
+        EXPECT_EQ(reported_iterations.load(std::memory_order_relaxed), 2u);
     }
 
     TEST(SearchTests, ObservesStopFlag)

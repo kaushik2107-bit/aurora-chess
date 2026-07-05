@@ -158,8 +158,7 @@ namespace aurora::chess
 
     [[nodiscard]] constexpr Move make_move(Square from, Square to, MoveFlag flag = MoveFlag::Quiet) noexcept
     {
-        return static_cast<Move>(static_cast<std::uint16_t>(from) |
-                                 (static_cast<std::uint16_t>(to) << 6) |
+        return static_cast<Move>(static_cast<std::uint16_t>(from) | (static_cast<std::uint16_t>(to) << 6) |
                                  (static_cast<std::uint16_t>(flag) << 12));
     }
 
@@ -327,11 +326,13 @@ namespace aurora::chess
 
         [[nodiscard]] bool legal(Move move) const;
         bool make_move(Move move);
+        bool make_null_move();
         bool undo_move();
 
     private:
         struct UndoState
         {
+            bool null_move{false};
             Move move{0};
             Piece moved{Piece::None};
             Piece captured{Piece::None};
