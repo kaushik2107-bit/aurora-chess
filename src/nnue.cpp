@@ -16,7 +16,7 @@ namespace aurora::chess
     namespace
     {
 
-        constexpr std::size_t kAccumulatorSize = 128;
+        constexpr std::size_t kAccumulatorSize = NnueEvaluator::kAccumulatorSize;
         constexpr std::size_t kLayer1InputSize = 2 * kAccumulatorSize;
         constexpr std::size_t kLayer2Size = 32;
         constexpr std::size_t kLayer3Size = 32;
@@ -217,6 +217,24 @@ namespace aurora::chess
         return path_;
     }
 
+    void NnueEvaluator::apply_feature(Accumulator& accumulator, Color perspective, Color piece_color,
+                                      PieceType piece_type, Square square, float sign) const noexcept
+    {
+        if (!is_loaded() || piece_type == PieceType::King || piece_type == PieceType::Count)
+        {
+            return;
+        }
+
+        const auto index = feature_index(perspective, piece_color, piece_type, square,
+                                         accumulator.king_squares[color_index(perspective)]);
+        const auto* weights = network_->feature_weights.data() + index * kAccumulatorSize;
+        auto& view = accumulator.values[color_index(perspective)];
+        for (std::size_t i = 0; i < kAccumulatorSize; ++i)
+        {
+            view[i] += sign * weights[i];
+        }
+    }
+
     Score NnueEvaluator::evaluate(const Board& board) const noexcept
     {
         if (!is_loaded() || board.king_square(Color::White) == Square::NoSquare ||
@@ -225,15 +243,54 @@ namespace aurora::chess
             return fallback_.evaluate(board);
         }
 
-        std::array<std::array<float, kAccumulatorSize>, 2> accumulator{
+        Accumulator accumulator;
+        refresh_accumulator(board, accumulator);
+        return evaluate(board, accumulator);
+    }
+
+    Score NnueEvaluator::evaluate(const Board& board, const Accumulator& accumulator) const noexcept
+    {
+        if (!is_loaded() || !accumulator.valid)
+        {
+            return fallback_.evaluate(board);
+        }
+
+        const Color side = board.side_to_move();
+        const Color other = ~side;
+        std::array<float, kLayer1InputSize> transformed{};
+        for (std::size_t i = 0; i < kAccumulatorSize; ++i)
+        {
+            transformed[i] = std::clamp(accumulator.values[color_index(side)][i], 0.0f, 1.0f);
+            transformed[i + kAccumulatorSize] = std::clamp(accumulator.values[color_index(other)][i], 0.0f, 1.0f);
+        }
+
+        std::array<float, kLayer2Size> layer1{};
+        std::array<float, kLayer3Size> layer2{};
+        std::array<float, 1> output{};
+        dense_clipped_relu(transformed, network_->fc1_weights, network_->fc1_biases, layer1);
+        dense_clipped_relu(layer1, network_->fc2_weights, network_->fc2_biases, layer2);
+        dense_linear(layer2, network_->output_weights, network_->output_bias, output);
+        return static_cast<Score>(output[0] * 100.0f);
+    }
+
+    void NnueEvaluator::refresh_accumulator(const Board& board, Accumulator& accumulator) const noexcept
+    {
+        if (!is_loaded() || board.king_square(Color::White) == Square::NoSquare ||
+            board.king_square(Color::Black) == Square::NoSquare)
+        {
+            accumulator.valid = false;
+            return;
+        }
+
+        accumulator.values = {
             network_->feature_biases,
             network_->feature_biases,
         };
-
-        const std::array<Square, 2> kings{
+        accumulator.king_squares = {
             board.king_square(Color::White),
             board.king_square(Color::Black),
         };
+        accumulator.valid = true;
 
         for (Color piece_color : {Color::White, Color::Black})
         {
@@ -247,36 +304,57 @@ namespace aurora::chess
                     const auto square = static_cast<Square>(lsb_index(pieces));
                     for (Color perspective : {Color::White, Color::Black})
                     {
-                        const auto index =
-                            feature_index(perspective, piece_color, type, square, kings[color_index(perspective)]);
-                        const auto* weights = network_->feature_weights.data() + index * kAccumulatorSize;
-                        auto& view = accumulator[color_index(perspective)];
-                        for (std::size_t i = 0; i < kAccumulatorSize; ++i)
-                        {
-                            view[i] += weights[i];
-                        }
+                        apply_feature(accumulator, perspective, piece_color, type, square, 1.0f);
                     }
                     pieces &= pieces - 1;
                 }
             }
         }
+    }
 
-        const Color side = board.side_to_move();
-        const Color other = ~side;
-        std::array<float, kLayer1InputSize> transformed{};
-        for (std::size_t i = 0; i < kAccumulatorSize; ++i)
+    void NnueEvaluator::update_accumulator(const Accumulator& previous, const Board& board,
+                                           const Board::DirtyPiece& dirty, Accumulator& next) const noexcept
+    {
+        if (!is_loaded() || !previous.valid ||
+            previous.king_squares[color_index(Color::White)] != board.king_square(Color::White) ||
+            previous.king_squares[color_index(Color::Black)] != board.king_square(Color::Black))
         {
-            transformed[i] = std::clamp(accumulator[color_index(side)][i], 0.0f, 1.0f);
-            transformed[i + kAccumulatorSize] = std::clamp(accumulator[color_index(other)][i], 0.0f, 1.0f);
+            refresh_accumulator(board, next);
+            return;
         }
 
-        std::array<float, kLayer2Size> layer1{};
-        std::array<float, kLayer3Size> layer2{};
-        std::array<float, 1> output{};
-        dense_clipped_relu(transformed, network_->fc1_weights, network_->fc1_biases, layer1);
-        dense_clipped_relu(layer1, network_->fc2_weights, network_->fc2_biases, layer2);
-        dense_linear(layer2, network_->output_weights, network_->output_bias, output);
-        return static_cast<Score>(output[0] * 100.0f);
+        next = previous;
+
+        for (std::uint8_t i = 0; i < dirty.removed_count; ++i)
+        {
+            const Piece piece = dirty.removed_pieces[i];
+            if (piece_type(piece) == PieceType::King)
+            {
+                refresh_accumulator(board, next);
+                return;
+            }
+            for (Color perspective : {Color::White, Color::Black})
+            {
+                apply_feature(next, perspective, piece_color(piece), piece_type(piece), dirty.removed_squares[i],
+                              -1.0f);
+            }
+        }
+
+        for (std::uint8_t i = 0; i < dirty.added_count; ++i)
+        {
+            const Piece piece = dirty.added_pieces[i];
+            if (piece_type(piece) == PieceType::King)
+            {
+                refresh_accumulator(board, next);
+                return;
+            }
+            for (Color perspective : {Color::White, Color::Black})
+            {
+                apply_feature(next, perspective, piece_color(piece), piece_type(piece), dirty.added_squares[i], 1.0f);
+            }
+        }
+
+        next.valid = true;
     }
 
 } // namespace aurora::chess

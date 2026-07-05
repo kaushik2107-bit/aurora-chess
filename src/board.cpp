@@ -93,6 +93,30 @@ namespace aurora::chess
             }
         }
 
+        void add_removed(Board::DirtyPiece& dirty, Piece piece, Square square) noexcept
+        {
+            if (piece == Piece::None || dirty.removed_count >= Board::kMaxDirtyPieces)
+            {
+                return;
+            }
+
+            dirty.removed_pieces[dirty.removed_count] = piece;
+            dirty.removed_squares[dirty.removed_count] = square;
+            ++dirty.removed_count;
+        }
+
+        void add_added(Board::DirtyPiece& dirty, Piece piece, Square square) noexcept
+        {
+            if (piece == Piece::None || dirty.added_count >= Board::kMaxDirtyPieces)
+            {
+                return;
+            }
+
+            dirty.added_pieces[dirty.added_count] = piece;
+            dirty.added_squares[dirty.added_count] = square;
+            ++dirty.added_count;
+        }
+
         std::string square_name(Square square)
         {
             if (square == Square::NoSquare)
@@ -430,6 +454,12 @@ namespace aurora::chess
         return pinners_;
     }
 
+    const Board::DirtyPiece& Board::last_dirty_piece() const noexcept
+    {
+        static constexpr DirtyPiece kEmptyDirtyPiece{};
+        return history_size_ == 0 ? kEmptyDirtyPiece : history_[history_size_ - 1].dirty_piece;
+    }
+
     void Board::update_state() noexcept
     {
         checkers_ = 0;
@@ -567,6 +597,32 @@ namespace aurora::chess
         const auto captured_square = flag == MoveFlag::EnPassant
                                          ? static_cast<Square>(static_cast<int>(to) + (us == Color::White ? -8 : 8))
                                          : to;
+        DirtyPiece dirty;
+        add_removed(dirty, moving, from);
+        add_removed(dirty, captured, captured_square);
+
+        Piece placed = moving;
+        if (is_promotion(flag))
+        {
+            placed = make_piece(us, promotion_type(flag));
+        }
+        add_added(dirty, placed, to);
+
+        if (flag == MoveFlag::KingCastle)
+        {
+            const Square rook_from = us == Color::White ? Square::H1 : Square::H8;
+            const Square rook_to = us == Color::White ? Square::F1 : Square::F8;
+            add_removed(dirty, us == Color::White ? Piece::WhiteRook : Piece::BlackRook, rook_from);
+            add_added(dirty, us == Color::White ? Piece::WhiteRook : Piece::BlackRook, rook_to);
+        }
+        else if (flag == MoveFlag::QueenCastle)
+        {
+            const Square rook_from = us == Color::White ? Square::A1 : Square::A8;
+            const Square rook_to = us == Color::White ? Square::D1 : Square::D8;
+            add_removed(dirty, us == Color::White ? Piece::WhiteRook : Piece::BlackRook, rook_from);
+            add_added(dirty, us == Color::White ? Piece::WhiteRook : Piece::BlackRook, rook_to);
+        }
+
         history_[history_size_++] = UndoState{false,
                                               move,
                                               moving,
@@ -576,7 +632,8 @@ namespace aurora::chess
                                               en_passant_square_,
                                               halfmove_clock_,
                                               fullmove_number_,
-                                              side_to_move_};
+                                              side_to_move_,
+                                              dirty};
 
         if (moving_type == PieceType::King)
         {
@@ -636,11 +693,6 @@ namespace aurora::chess
             set_piece(Piece::None, captured_square);
         }
 
-        Piece placed = moving;
-        if (is_promotion(flag))
-        {
-            placed = make_piece(us, promotion_type(flag));
-        }
         set_piece(placed, to);
 
         if (flag == MoveFlag::KingCastle)

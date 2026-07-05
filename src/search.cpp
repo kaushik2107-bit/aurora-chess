@@ -1,6 +1,7 @@
 #include "search.hpp"
 
 #include "movepick.hpp"
+#include "nnue.hpp"
 #include "see.hpp"
 #include "thread.hpp"
 
@@ -132,48 +133,6 @@ namespace aurora::chess
             score = std::min(kMaxHistoryScore, score + bonus);
         }
 
-        struct MoveLoopResult
-        {
-            bool generated_any{false};
-            std::size_t searched{0};
-        };
-
-        template <typename MoveFilter, typename MoveHandler>
-        MoveLoopResult visit_ordered_moves(Board& board, MoveOrdering ordering, MoveFilter&& filter,
-                                           MoveHandler&& handler)
-        {
-            MovePicker picker{board, ordering};
-            if (!picker.generated_any())
-            {
-                return {};
-            }
-
-            MoveLoopResult result{true, 0};
-            for (Move move = picker.next(); move != 0; move = picker.next())
-            {
-                if (!filter(move))
-                {
-                    continue;
-                }
-
-                if (!board.make_move(move))
-                {
-                    continue;
-                }
-
-                const bool stop = handler(move, result.searched);
-                ++result.searched;
-                board.undo_move();
-
-                if (stop)
-                {
-                    break;
-                }
-            }
-
-            return result;
-        }
-
         class SearchWorker
         {
         public:
@@ -186,6 +145,14 @@ namespace aurora::chess
             [[nodiscard]] SearchResult search(const Board& board);
 
         private:
+            [[nodiscard]] Score evaluate(const Board& board) const noexcept;
+            bool make_search_move(Board& board, Move move);
+            void undo_search_move(Board& board);
+            void reset_accumulator(const Board& board);
+            void push_accumulator(const Board& board);
+            void pop_accumulator() noexcept;
+            void count_node() noexcept;
+
             [[nodiscard]] SearchIteration search_root(Board& board, std::size_t depth, Move previous_best, Score alpha,
                                                       Score beta);
             [[nodiscard]] Score alpha_beta(Board& board, std::size_t depth, Score alpha, Score beta, std::size_t ply,
@@ -196,6 +163,8 @@ namespace aurora::chess
 
             SearchLimits limits_;
             SearchState state_;
+            const NnueEvaluator* nnue_{nullptr};
+            std::vector<NnueEvaluator::Accumulator> accumulator_stack_;
         };
 
         bool SearchWorker::stopped() const noexcept
@@ -203,10 +172,79 @@ namespace aurora::chess
             return limits_.stop != nullptr && limits_.stop->load(std::memory_order_relaxed);
         }
 
+        Score SearchWorker::evaluate(const Board& board) const noexcept
+        {
+            if (nnue_ != nullptr && !accumulator_stack_.empty())
+            {
+                return nnue_->evaluate(board, accumulator_stack_.back());
+            }
+            return state_.evaluator.evaluate(board);
+        }
+
+        void SearchWorker::reset_accumulator(const Board& board)
+        {
+            nnue_ = dynamic_cast<const NnueEvaluator*>(&state_.evaluator);
+            accumulator_stack_.clear();
+            if (nnue_ == nullptr || !nnue_->is_loaded())
+            {
+                nnue_ = nullptr;
+                return;
+            }
+
+            accumulator_stack_.resize(1);
+            nnue_->refresh_accumulator(board, accumulator_stack_.back());
+        }
+
+        void SearchWorker::push_accumulator(const Board& board)
+        {
+            if (nnue_ == nullptr)
+            {
+                return;
+            }
+
+            accumulator_stack_.emplace_back();
+            nnue_->update_accumulator(accumulator_stack_[accumulator_stack_.size() - 2], board,
+                                      board.last_dirty_piece(), accumulator_stack_.back());
+        }
+
+        void SearchWorker::pop_accumulator() noexcept
+        {
+            if (nnue_ != nullptr && accumulator_stack_.size() > 1)
+            {
+                accumulator_stack_.pop_back();
+            }
+        }
+
+        bool SearchWorker::make_search_move(Board& board, Move move)
+        {
+            if (!board.make_move(move))
+            {
+                return false;
+            }
+            push_accumulator(board);
+            return true;
+        }
+
+        void SearchWorker::undo_search_move(Board& board)
+        {
+            pop_accumulator();
+            board.undo_move();
+        }
+
+        void SearchWorker::count_node() noexcept
+        {
+            ++state_.nodes;
+            if (limits_.shared_nodes != nullptr)
+            {
+                limits_.shared_nodes->fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
         SearchResult SearchWorker::search(const Board& board)
         {
             SearchResult result;
             Board working = board;
+            reset_accumulator(working);
             const std::size_t max_depth = std::max<std::size_t>(1, limits_.depth);
             result.iterations.reserve(max_depth);
 
@@ -316,14 +354,14 @@ namespace aurora::chess
                 }
 
                 const Move move = root_moves[(first_move + searched) % root_moves.size()];
-                if (!board.make_move(move))
+                if (!make_search_move(board, move))
                 {
                     continue;
                 }
 
                 std::vector<Move> child_pv;
                 const Score score = -alpha_beta(board, depth - 1, -beta, -alpha, 1, child_pv);
-                board.undo_move();
+                undo_search_move(board);
 
                 if (score > best_score)
                 {
@@ -380,7 +418,7 @@ namespace aurora::chess
             if (stopped())
             {
                 pv.clear();
-                return state_.evaluator.evaluate(board);
+                return evaluate(board);
             }
 
             if (depth == 0)
@@ -395,7 +433,7 @@ namespace aurora::chess
                 return alpha;
             }
 
-            ++state_.nodes;
+            count_node();
             state_.selective_depth = std::max(state_.selective_depth, ply);
             const Score original_alpha = alpha;
             const bool pv_node = beta - alpha > 1;
@@ -407,7 +445,7 @@ namespace aurora::chess
             {
                 if (!static_eval_ready)
                 {
-                    static_eval = state_.evaluator.evaluate(board);
+                    static_eval = evaluate(board);
                     static_eval_ready = true;
                 }
                 return static_eval;
@@ -483,7 +521,7 @@ namespace aurora::chess
                         continue;
                     }
 
-                    if (!board.make_move(move))
+                    if (!make_search_move(board, move))
                     {
                         continue;
                     }
@@ -496,7 +534,7 @@ namespace aurora::chess
                         score =
                             -alpha_beta(board, prob_depth, -prob_cut_beta, -prob_cut_beta + 1, ply + 1, prob_pv, false);
                     }
-                    board.undo_move();
+                    undo_search_move(board);
 
                     if (score >= prob_cut_beta)
                     {
@@ -535,7 +573,7 @@ namespace aurora::chess
                     !pv_node && !in_check && best_move != 0 && quiet_late_move && depth <= 8 &&
                     !see_ge(board, move, -static_cast<Score>(30 * estimated_lmr_depth * estimated_lmr_depth));
 
-                if (!board.make_move(move))
+                if (!make_search_move(board, move))
                 {
                     continue;
                 }
@@ -545,7 +583,7 @@ namespace aurora::chess
 
                 if (!gives_check && (noisy_see_bad || quiet_see_bad))
                 {
-                    board.undo_move();
+                    undo_search_move(board);
                     continue;
                 }
 
@@ -553,7 +591,7 @@ namespace aurora::chess
                 {
                     if (move_number >= futility_move_count(depth))
                     {
-                        board.undo_move();
+                        undo_search_move(board);
                         continue;
                     }
 
@@ -564,7 +602,7 @@ namespace aurora::chess
                         if (futility_score <= alpha)
                         {
                             best_score = std::max(best_score, futility_score);
-                            board.undo_move();
+                            undo_search_move(board);
                             continue;
                         }
                     }
@@ -599,7 +637,7 @@ namespace aurora::chess
                     }
                 }
 
-                board.undo_move();
+                undo_search_move(board);
 
                 best_score = std::max(best_score, score);
                 if (score > alpha)
@@ -640,17 +678,17 @@ namespace aurora::chess
             if (stopped())
             {
                 pv.clear();
-                return state_.evaluator.evaluate(board);
+                return evaluate(board);
             }
 
-            ++state_.nodes;
+            count_node();
             state_.selective_depth = std::max(state_.selective_depth, ply);
             pv.clear();
 
             const bool in_check = board.checkers() != 0;
             if (!in_check || ply >= state_.max_quiescence_ply)
             {
-                const Score stand_pat = state_.evaluator.evaluate(board);
+                const Score stand_pat = evaluate(board);
                 if (stand_pat >= beta)
                 {
                     return beta;
@@ -663,38 +701,44 @@ namespace aurora::chess
                 }
             }
 
-            const auto loop = visit_ordered_moves(
-                board, MoveOrdering{},
-                [&](Move move)
+            MovePicker picker{board};
+            const bool generated_any = picker.generated_any();
+            for (Move move = picker.next(); move != 0; move = picker.next())
+            {
+                if (stopped())
                 {
-                    if (!in_check && !is_noisy(move))
-                    {
-                        return false;
-                    }
-                    return in_check || !is_noisy(move) || is_good_noisy(board, move);
-                },
-                [&](Move move, std::size_t)
+                    break;
+                }
+
+                if (!in_check && !is_noisy(move))
                 {
-                    if (stopped())
-                    {
-                        return true;
-                    }
+                    continue;
+                }
+                if (!in_check && is_noisy(move) && !is_good_noisy(board, move))
+                {
+                    continue;
+                }
+                if (!make_search_move(board, move))
+                {
+                    continue;
+                }
 
-                    std::vector<Move> child_pv;
-                    const Score score = -quiescence(board, -beta, -alpha, ply + 1, child_pv);
-                    if (score >= beta)
-                    {
-                        return true;
-                    }
-                    if (score > alpha)
-                    {
-                        update_pv(pv, move, child_pv);
-                        alpha = score;
-                    }
-                    return false;
-                });
+                std::vector<Move> child_pv;
+                const Score score = -quiescence(board, -beta, -alpha, ply + 1, child_pv);
+                undo_search_move(board);
 
-            if (!loop.generated_any)
+                if (score >= beta)
+                {
+                    return beta;
+                }
+                if (score > alpha)
+                {
+                    update_pv(pv, move, child_pv);
+                    alpha = score;
+                }
+            }
+
+            if (!generated_any)
             {
                 return in_check ? -kMateScore + static_cast<Score>(ply) : alpha;
             }
@@ -733,6 +777,7 @@ namespace aurora::chess
                                                    const Evaluator& evaluator, std::size_t worker_count)
         {
             std::vector<SearchResult> worker_results(worker_count);
+            std::atomic_uint64_t shared_nodes{0};
             auto run_worker = [&](std::size_t worker_id)
             {
                 if (worker_id >= worker_count)
@@ -743,8 +788,18 @@ namespace aurora::chess
                 SearchLimits worker_limits = limits;
                 worker_limits.threads = 1;
                 worker_limits.worker_id = worker_id;
+                worker_limits.shared_nodes = &shared_nodes;
                 worker_limits.thread_pool = nullptr;
-                if (worker_id != 0)
+                if (worker_id == 0 && limits.on_iteration)
+                {
+                    worker_limits.on_iteration = [&](const SearchIteration& iteration)
+                    {
+                        SearchIteration collective = iteration;
+                        collective.nodes = shared_nodes.load(std::memory_order_relaxed);
+                        limits.on_iteration(collective);
+                    };
+                }
+                else if (worker_id != 0)
                 {
                     worker_limits.on_iteration = {};
                 }
@@ -773,7 +828,9 @@ namespace aurora::chess
                 }
             }
 
-            return select_lazy_smp_result(worker_results);
+            SearchResult result = select_lazy_smp_result(worker_results);
+            result.nodes = shared_nodes.load(std::memory_order_relaxed);
+            return result;
         }
 
     } // namespace

@@ -35,6 +35,7 @@ namespace aurora::chess
         std::size_t threads{1};
         std::size_t worker_id{0};
         std::atomic_bool* stop{nullptr};
+        std::atomic_uint64_t* shared_nodes{nullptr};
         ThreadPool* thread_pool{nullptr};
         std::function<void(const SearchIteration&)> on_iteration{};
     };

@@ -303,6 +303,18 @@ namespace aurora::chess
     class Board
     {
     public:
+        static constexpr std::size_t kMaxDirtyPieces = 4;
+
+        struct DirtyPiece
+        {
+            std::array<Piece, kMaxDirtyPieces> removed_pieces{};
+            std::array<Square, kMaxDirtyPieces> removed_squares{};
+            std::array<Piece, kMaxDirtyPieces> added_pieces{};
+            std::array<Square, kMaxDirtyPieces> added_squares{};
+            std::uint8_t removed_count{0};
+            std::uint8_t added_count{0};
+        };
+
         Board(std::string_view fen = kStartFen);
 
         void set_fen(std::string_view fen);
@@ -323,6 +335,7 @@ namespace aurora::chess
         [[nodiscard]] Bitboard checkers() const noexcept;
         [[nodiscard]] Bitboard pinned() const noexcept;
         [[nodiscard]] Bitboard pinners() const noexcept;
+        [[nodiscard]] const DirtyPiece& last_dirty_piece() const noexcept;
 
         [[nodiscard]] bool legal(Move move) const;
         bool make_move(Move move);
@@ -342,6 +355,7 @@ namespace aurora::chess
             std::uint32_t halfmove_clock{0};
             std::uint32_t fullmove_number{1};
             Color side_to_move{Color::White};
+            DirtyPiece dirty_piece{};
         };
 
         void clear();
