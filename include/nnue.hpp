@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -17,7 +18,7 @@ namespace aurora::chess
 
         struct Accumulator
         {
-            std::array<std::array<float, kAccumulatorSize>, 2> values{};
+            alignas(64) std::array<std::array<std::int32_t, kAccumulatorSize>, 2> values{};
             std::array<Square, 2> king_squares{Square::NoSquare, Square::NoSquare};
             bool valid{false};
         };
@@ -46,7 +47,7 @@ namespace aurora::chess
         struct Network;
 
         void apply_feature(Accumulator& accumulator, Color perspective, Color piece_color, PieceType piece_type,
-                           Square square, float sign) const noexcept;
+                           Square square, int sign) const noexcept;
 
         std::unique_ptr<Network> network_;
         PsqtEvaluator fallback_;

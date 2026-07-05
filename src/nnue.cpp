@@ -4,10 +4,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
-#include <numeric>
 #include <string>
 #include <vector>
 
@@ -23,7 +23,10 @@ namespace aurora::chess
         constexpr std::size_t kKingBuckets = 32;
         constexpr std::size_t kFeaturePieceSlots = 10;
         constexpr std::size_t kFeatureCount = kKingBuckets * kFeaturePieceSlots * 64;
-        constexpr float kConversionFactor = static_cast<float>(INT16_MAX / 3);
+        constexpr std::int32_t kAccumulatorScale = INT16_MAX / 3;
+        constexpr std::int32_t kActivationScale = 1024;
+        constexpr std::int32_t kDenseWeightScale = 1024;
+        constexpr std::int32_t kDenseScale = kActivationScale * kDenseWeightScale;
         constexpr int kBlackPerspectiveXor = 56;
 
         // clang-format off
@@ -77,26 +80,97 @@ namespace aurora::chess
             return !input.fail();
         }
 
-        template <std::size_t In, std::size_t Out>
-        void dense_clipped_relu(const std::array<float, In>& input, const std::vector<float>& weights,
-                                const std::array<float, Out>& biases, std::array<float, Out>& output) noexcept
+        [[nodiscard]] std::int32_t to_fixed(float value) noexcept
         {
+            return static_cast<std::int32_t>(std::lround(value * static_cast<float>(kAccumulatorScale)));
+        }
+
+        [[nodiscard]] std::int16_t to_dense_weight(float value) noexcept
+        {
+            const auto scaled = static_cast<std::int32_t>(std::lround(value * static_cast<float>(kDenseWeightScale)));
+            return static_cast<std::int16_t>(
+                std::clamp(scaled, static_cast<std::int32_t>(INT16_MIN), static_cast<std::int32_t>(INT16_MAX)));
+        }
+
+        [[nodiscard]] std::int32_t to_dense_bias(float value) noexcept
+        {
+            return static_cast<std::int32_t>(std::lround(value * static_cast<float>(kDenseScale)));
+        }
+
+        [[nodiscard]] std::int16_t to_activation(std::int32_t value) noexcept
+        {
+            const auto clipped = std::clamp(value, std::int32_t{0}, kAccumulatorScale);
+            const auto scaled =
+                (static_cast<std::int64_t>(clipped) * kActivationScale + kAccumulatorScale / 2) / kAccumulatorScale;
+            return static_cast<std::int16_t>(scaled);
+        }
+
+        [[nodiscard]] std::int16_t to_clipped_activation(std::int32_t value) noexcept
+        {
+            const auto clipped = std::clamp(value, std::int32_t{0}, kDenseScale);
+            return static_cast<std::int16_t>((clipped + kDenseWeightScale / 2) / kDenseWeightScale);
+        }
+
+        [[nodiscard]] Score to_score(std::int32_t value) noexcept
+        {
+            const auto scaled = static_cast<std::int64_t>(value) * 100;
+            const auto rounded = scaled >= 0 ? scaled + kDenseScale / 2 : scaled - kDenseScale / 2;
+            return static_cast<Score>(rounded / kDenseScale);
+        }
+
+        void quantize_weights(const std::vector<float>& source, std::vector<std::int16_t>& destination) noexcept
+        {
+            for (std::size_t i = 0; i < source.size(); ++i)
+            {
+                destination[i] = to_dense_weight(source[i]);
+            }
+        }
+
+        template <std::size_t Size>
+        [[nodiscard]] std::array<std::int32_t, Size> quantize_biases(const std::array<float, Size>& source) noexcept
+        {
+            std::array<std::int32_t, Size> destination{};
+            for (std::size_t i = 0; i < source.size(); ++i)
+            {
+                destination[i] = to_dense_bias(source[i]);
+            }
+            return destination;
+        }
+
+        template <std::size_t In, std::size_t Out>
+        void dense_clipped_relu(const std::array<std::int16_t, In>& input, const std::vector<std::int16_t>& weights,
+                                const std::array<std::int32_t, Out>& biases,
+                                std::array<std::int16_t, Out>& output) noexcept
+        {
+            const std::int16_t* input_data = input.data();
+            const std::int16_t* weights_data = weights.data();
             for (std::size_t row = 0; row < Out; ++row)
             {
-                const auto begin = weights.begin() + static_cast<std::ptrdiff_t>(row * In);
-                float value = biases[row] + std::inner_product(input.begin(), input.end(), begin, 0.0f);
-                output[row] = std::clamp(value, 0.0f, 1.0f);
+                const std::int16_t* row_weights = weights_data + row * In;
+                std::int32_t value = biases[row];
+                for (std::size_t column = 0; column < In; ++column)
+                {
+                    value += input_data[column] * row_weights[column];
+                }
+                output[row] = to_clipped_activation(value);
             }
         }
 
         template <std::size_t In, std::size_t Out>
-        void dense_linear(const std::array<float, In>& input, const std::vector<float>& weights,
-                          const std::array<float, Out>& biases, std::array<float, Out>& output) noexcept
+        void dense_linear(const std::array<std::int16_t, In>& input, const std::vector<std::int16_t>& weights,
+                          const std::array<std::int32_t, Out>& biases, std::array<std::int32_t, Out>& output) noexcept
         {
+            const std::int16_t* input_data = input.data();
+            const std::int16_t* weights_data = weights.data();
             for (std::size_t row = 0; row < Out; ++row)
             {
-                const auto begin = weights.begin() + static_cast<std::ptrdiff_t>(row * In);
-                output[row] = biases[row] + std::inner_product(input.begin(), input.end(), begin, 0.0f);
+                const std::int16_t* row_weights = weights_data + row * In;
+                std::int32_t value = biases[row];
+                for (std::size_t column = 0; column < In; ++column)
+                {
+                    value += input_data[column] * row_weights[column];
+                }
+                output[row] = value;
             }
         }
 
@@ -119,14 +193,14 @@ namespace aurora::chess
 
     struct NnueEvaluator::Network
     {
-        std::vector<float> feature_weights;
-        std::array<float, kAccumulatorSize> feature_biases{};
-        std::vector<float> fc1_weights;
-        std::array<float, kLayer2Size> fc1_biases{};
-        std::vector<float> fc2_weights;
-        std::array<float, kLayer3Size> fc2_biases{};
-        std::vector<float> output_weights;
-        std::array<float, 1> output_bias{};
+        std::vector<std::int16_t> feature_weights;
+        std::array<std::int32_t, kAccumulatorSize> feature_biases{};
+        std::vector<std::int16_t> fc1_weights;
+        std::array<std::int32_t, kLayer2Size> fc1_biases{};
+        std::vector<std::int16_t> fc2_weights;
+        std::array<std::int32_t, kLayer3Size> fc2_biases{};
+        std::vector<std::int16_t> output_weights;
+        std::array<std::int32_t, 1> output_bias{};
         bool loaded{false};
 
         Network()
@@ -153,35 +227,41 @@ namespace aurora::chess
             return false;
         }
 
-        std::vector<std::int16_t> raw_feature_weights(kFeatureCount * kAccumulatorSize);
-        input.read(reinterpret_cast<char*>(raw_feature_weights.data()),
-                   static_cast<std::streamsize>(sizeof(std::int16_t) * raw_feature_weights.size()));
+        input.read(reinterpret_cast<char*>(next->feature_weights.data()),
+                   static_cast<std::streamsize>(sizeof(std::int16_t) * next->feature_weights.size()));
         if (input.fail())
         {
             return false;
         }
 
-        for (std::size_t i = 0; i < raw_feature_weights.size(); ++i)
+        const auto feature_biases = read_float_array<kAccumulatorSize>(input);
+        for (std::size_t i = 0; i < feature_biases.size(); ++i)
         {
-            next->feature_weights[i] = static_cast<float>(raw_feature_weights[i]) / kConversionFactor;
+            next->feature_biases[i] = to_fixed(feature_biases[i]);
         }
+        std::vector<float> fc1_weights(next->fc1_weights.size());
+        if (!read_floats(input, fc1_weights))
+        {
+            return false;
+        }
+        quantize_weights(fc1_weights, next->fc1_weights);
+        next->fc1_biases = quantize_biases(read_float_array<kLayer2Size>(input));
 
-        next->feature_biases = read_float_array<kAccumulatorSize>(input);
-        if (!read_floats(input, next->fc1_weights))
+        std::vector<float> fc2_weights(next->fc2_weights.size());
+        if (!read_floats(input, fc2_weights))
         {
             return false;
         }
-        next->fc1_biases = read_float_array<kLayer2Size>(input);
-        if (!read_floats(input, next->fc2_weights))
+        quantize_weights(fc2_weights, next->fc2_weights);
+        next->fc2_biases = quantize_biases(read_float_array<kLayer3Size>(input));
+
+        std::vector<float> output_weights(next->output_weights.size());
+        if (!read_floats(input, output_weights))
         {
             return false;
         }
-        next->fc2_biases = read_float_array<kLayer3Size>(input);
-        if (!read_floats(input, next->output_weights))
-        {
-            return false;
-        }
-        next->output_bias = read_float_array<1>(input);
+        quantize_weights(output_weights, next->output_weights);
+        next->output_bias = quantize_biases(read_float_array<1>(input));
 
         if (input.fail())
         {
@@ -218,7 +298,7 @@ namespace aurora::chess
     }
 
     void NnueEvaluator::apply_feature(Accumulator& accumulator, Color perspective, Color piece_color,
-                                      PieceType piece_type, Square square, float sign) const noexcept
+                                      PieceType piece_type, Square square, int sign) const noexcept
     {
         if (!is_loaded() || piece_type == PieceType::King || piece_type == PieceType::Count)
         {
@@ -257,20 +337,20 @@ namespace aurora::chess
 
         const Color side = board.side_to_move();
         const Color other = ~side;
-        std::array<float, kLayer1InputSize> transformed{};
+        std::array<std::int16_t, kLayer1InputSize> transformed{};
         for (std::size_t i = 0; i < kAccumulatorSize; ++i)
         {
-            transformed[i] = std::clamp(accumulator.values[color_index(side)][i], 0.0f, 1.0f);
-            transformed[i + kAccumulatorSize] = std::clamp(accumulator.values[color_index(other)][i], 0.0f, 1.0f);
+            transformed[i] = to_activation(accumulator.values[color_index(side)][i]);
+            transformed[i + kAccumulatorSize] = to_activation(accumulator.values[color_index(other)][i]);
         }
 
-        std::array<float, kLayer2Size> layer1{};
-        std::array<float, kLayer3Size> layer2{};
-        std::array<float, 1> output{};
+        std::array<std::int16_t, kLayer2Size> layer1{};
+        std::array<std::int16_t, kLayer3Size> layer2{};
+        std::array<std::int32_t, 1> output{};
         dense_clipped_relu(transformed, network_->fc1_weights, network_->fc1_biases, layer1);
         dense_clipped_relu(layer1, network_->fc2_weights, network_->fc2_biases, layer2);
         dense_linear(layer2, network_->output_weights, network_->output_bias, output);
-        return static_cast<Score>(output[0] * 100.0f);
+        return to_score(output[0]);
     }
 
     void NnueEvaluator::refresh_accumulator(const Board& board, Accumulator& accumulator) const noexcept
@@ -304,7 +384,7 @@ namespace aurora::chess
                     const auto square = static_cast<Square>(lsb_index(pieces));
                     for (Color perspective : {Color::White, Color::Black})
                     {
-                        apply_feature(accumulator, perspective, piece_color, type, square, 1.0f);
+                        apply_feature(accumulator, perspective, piece_color, type, square, 1);
                     }
                     pieces &= pieces - 1;
                 }
@@ -335,8 +415,7 @@ namespace aurora::chess
             }
             for (Color perspective : {Color::White, Color::Black})
             {
-                apply_feature(next, perspective, piece_color(piece), piece_type(piece), dirty.removed_squares[i],
-                              -1.0f);
+                apply_feature(next, perspective, piece_color(piece), piece_type(piece), dirty.removed_squares[i], -1);
             }
         }
 
@@ -350,7 +429,7 @@ namespace aurora::chess
             }
             for (Color perspective : {Color::White, Color::Black})
             {
-                apply_feature(next, perspective, piece_color(piece), piece_type(piece), dirty.added_squares[i], 1.0f);
+                apply_feature(next, perspective, piece_color(piece), piece_type(piece), dirty.added_squares[i], 1);
             }
         }
 

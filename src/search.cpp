@@ -42,6 +42,7 @@ namespace aurora::chess
 
         constexpr Score kInitialAspirationWindow = 25;
         constexpr Score kMinimumMateBound = kMateScore - 512;
+        constexpr std::size_t kAccumulatorStackSize = 256;
 
         [[nodiscard]] constexpr bool is_mate_score(Score score) noexcept
         {
@@ -164,7 +165,8 @@ namespace aurora::chess
             SearchLimits limits_;
             SearchState state_;
             const NnueEvaluator* nnue_{nullptr};
-            std::vector<NnueEvaluator::Accumulator> accumulator_stack_;
+            std::array<NnueEvaluator::Accumulator, kAccumulatorStackSize> accumulator_stack_{};
+            std::size_t accumulator_stack_size_{0};
         };
 
         bool SearchWorker::stopped() const noexcept
@@ -174,9 +176,9 @@ namespace aurora::chess
 
         Score SearchWorker::evaluate(const Board& board) const noexcept
         {
-            if (nnue_ != nullptr && !accumulator_stack_.empty())
+            if (nnue_ != nullptr && accumulator_stack_size_ != 0)
             {
-                return nnue_->evaluate(board, accumulator_stack_.back());
+                return nnue_->evaluate(board, accumulator_stack_[accumulator_stack_size_ - 1]);
             }
             return state_.evaluator.evaluate(board);
         }
@@ -184,15 +186,15 @@ namespace aurora::chess
         void SearchWorker::reset_accumulator(const Board& board)
         {
             nnue_ = dynamic_cast<const NnueEvaluator*>(&state_.evaluator);
-            accumulator_stack_.clear();
+            accumulator_stack_size_ = 0;
             if (nnue_ == nullptr || !nnue_->is_loaded())
             {
                 nnue_ = nullptr;
                 return;
             }
 
-            accumulator_stack_.resize(1);
-            nnue_->refresh_accumulator(board, accumulator_stack_.back());
+            accumulator_stack_size_ = 1;
+            nnue_->refresh_accumulator(board, accumulator_stack_[0]);
         }
 
         void SearchWorker::push_accumulator(const Board& board)
@@ -201,17 +203,21 @@ namespace aurora::chess
             {
                 return;
             }
+            if (accumulator_stack_size_ == 0 || accumulator_stack_size_ >= accumulator_stack_.size())
+            {
+                return;
+            }
 
-            accumulator_stack_.emplace_back();
-            nnue_->update_accumulator(accumulator_stack_[accumulator_stack_.size() - 2], board,
-                                      board.last_dirty_piece(), accumulator_stack_.back());
+            nnue_->update_accumulator(accumulator_stack_[accumulator_stack_size_ - 1], board, board.last_dirty_piece(),
+                                      accumulator_stack_[accumulator_stack_size_]);
+            ++accumulator_stack_size_;
         }
 
         void SearchWorker::pop_accumulator() noexcept
         {
-            if (nnue_ != nullptr && accumulator_stack_.size() > 1)
+            if (nnue_ != nullptr && accumulator_stack_size_ > 1)
             {
-                accumulator_stack_.pop_back();
+                --accumulator_stack_size_;
             }
         }
 
