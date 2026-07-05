@@ -4,10 +4,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -39,7 +42,63 @@ namespace aurora::chess
         constexpr std::int32_t kActivationScale = 1024;
         constexpr std::int32_t kDenseWeightScale = 1024;
         constexpr std::int32_t kDenseScale = kActivationScale * kDenseWeightScale;
+        constexpr std::size_t kSimdAlignment = 32;
         constexpr int kBlackPerspectiveXor = 56;
+
+        static_assert(kLayer1InputSize % 16 == 0);
+        static_assert(kLayer2Size % 16 == 0);
+        static_assert(kLayer3Size % 16 == 0);
+
+        template <typename T, std::size_t Alignment> class AlignedAllocator
+        {
+        public:
+            using value_type = T;
+
+            AlignedAllocator() noexcept = default;
+
+            template <typename U> constexpr AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
+
+            [[nodiscard]] T* allocate(std::size_t count)
+            {
+                if (count > std::numeric_limits<std::size_t>::max() / sizeof(T))
+                {
+                    throw std::bad_array_new_length{};
+                }
+
+                return static_cast<T*>(::operator new(count * sizeof(T), std::align_val_t{Alignment}));
+            }
+
+            void deallocate(T* pointer, std::size_t) noexcept
+            {
+                ::operator delete(pointer, std::align_val_t{Alignment});
+            }
+
+            template <typename U> struct rebind
+            {
+                using other = AlignedAllocator<U, Alignment>;
+            };
+        };
+
+        template <typename T, typename U, std::size_t Alignment>
+        [[nodiscard]] constexpr bool operator==(const AlignedAllocator<T, Alignment>&,
+                                                const AlignedAllocator<U, Alignment>&) noexcept
+        {
+            return true;
+        }
+
+        template <typename T, typename U, std::size_t Alignment>
+        [[nodiscard]] constexpr bool operator!=(const AlignedAllocator<T, Alignment>& lhs,
+                                                const AlignedAllocator<U, Alignment>& rhs) noexcept
+        {
+            return !(lhs == rhs);
+        }
+
+        template <typename T> using AlignedVector = std::vector<T, AlignedAllocator<T, kSimdAlignment>>;
+
+        [[nodiscard]] bool is_aligned(const void* pointer) noexcept
+        {
+            return reinterpret_cast<std::uintptr_t>(pointer) % kSimdAlignment == 0;
+        }
 
         // clang-format off
         constexpr std::array<std::uint8_t, 64> kKingBucket{
@@ -130,7 +189,7 @@ namespace aurora::chess
             return static_cast<Score>(rounded / kDenseScale);
         }
 
-        void quantize_weights(const std::vector<float>& source, std::vector<std::int16_t>& destination) noexcept
+        void quantize_weights(const std::vector<float>& source, AlignedVector<std::int16_t>& destination) noexcept
         {
             for (std::size_t i = 0; i < source.size(); ++i)
             {
@@ -168,11 +227,13 @@ namespace aurora::chess
             std::int32_t sum = 0;
 
 #if defined(__AVX2__)
+            assert(is_aligned(lhs));
+            assert(is_aligned(rhs));
             __m256i packed_sum = _mm256_setzero_si256();
             for (; index + 16 <= count; index += 16)
             {
-                const __m256i lhs_values = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(lhs + index));
-                const __m256i rhs_values = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(rhs + index));
+                const __m256i lhs_values = _mm256_load_si256(reinterpret_cast<const __m256i*>(lhs + index));
+                const __m256i rhs_values = _mm256_load_si256(reinterpret_cast<const __m256i*>(rhs + index));
                 packed_sum = _mm256_add_epi32(packed_sum, _mm256_madd_epi16(lhs_values, rhs_values));
             }
             sum = horizontal_sum_i32(packed_sum);
@@ -187,7 +248,7 @@ namespace aurora::chess
         }
 
         template <std::size_t In, std::size_t Out>
-        void dense_clipped_relu(const std::array<std::int16_t, In>& input, const std::vector<std::int16_t>& weights,
+        void dense_clipped_relu(const std::array<std::int16_t, In>& input, const AlignedVector<std::int16_t>& weights,
                                 const std::array<std::int32_t, Out>& biases,
                                 std::array<std::int16_t, Out>& output) noexcept
         {
@@ -202,7 +263,7 @@ namespace aurora::chess
         }
 
         template <std::size_t In, std::size_t Out>
-        void dense_linear(const std::array<std::int16_t, In>& input, const std::vector<std::int16_t>& weights,
+        void dense_linear(const std::array<std::int16_t, In>& input, const AlignedVector<std::int16_t>& weights,
                           const std::array<std::int32_t, Out>& biases, std::array<std::int32_t, Out>& output) noexcept
         {
             const std::int16_t* input_data = input.data();
@@ -233,13 +294,13 @@ namespace aurora::chess
 
     struct NnueEvaluator::Network
     {
-        std::vector<std::int16_t> feature_weights;
+        AlignedVector<std::int16_t> feature_weights;
         std::array<std::int32_t, kAccumulatorSize> feature_biases{};
-        std::vector<std::int16_t> fc1_weights;
+        AlignedVector<std::int16_t> fc1_weights;
         std::array<std::int32_t, kLayer2Size> fc1_biases{};
-        std::vector<std::int16_t> fc2_weights;
+        AlignedVector<std::int16_t> fc2_weights;
         std::array<std::int32_t, kLayer3Size> fc2_biases{};
-        std::vector<std::int16_t> output_weights;
+        AlignedVector<std::int16_t> output_weights;
         std::array<std::int32_t, 1> output_bias{};
         bool loaded{false};
 
@@ -377,15 +438,15 @@ namespace aurora::chess
 
         const Color side = board.side_to_move();
         const Color other = ~side;
-        std::array<std::int16_t, kLayer1InputSize> transformed{};
+        alignas(kSimdAlignment) std::array<std::int16_t, kLayer1InputSize> transformed{};
         for (std::size_t i = 0; i < kAccumulatorSize; ++i)
         {
             transformed[i] = to_activation(accumulator.values[color_index(side)][i]);
             transformed[i + kAccumulatorSize] = to_activation(accumulator.values[color_index(other)][i]);
         }
 
-        std::array<std::int16_t, kLayer2Size> layer1{};
-        std::array<std::int16_t, kLayer3Size> layer2{};
+        alignas(kSimdAlignment) std::array<std::int16_t, kLayer2Size> layer1{};
+        alignas(kSimdAlignment) std::array<std::int16_t, kLayer3Size> layer2{};
         std::array<std::int32_t, 1> output{};
         dense_clipped_relu(transformed, network_->fc1_weights, network_->fc1_biases, layer1);
         dense_clipped_relu(layer1, network_->fc2_weights, network_->fc2_biases, layer2);
