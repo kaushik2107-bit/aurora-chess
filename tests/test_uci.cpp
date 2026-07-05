@@ -66,6 +66,7 @@ namespace
         EXPECT_NE(output.str().find("option name Hash type spin"), std::string::npos);
         EXPECT_NE(output.str().find("option name Clear Hash type button"), std::string::npos);
         EXPECT_NE(output.str().find("option name Ponder type check"), std::string::npos);
+        EXPECT_NE(output.str().find("option name Use NNUE type check"), std::string::npos);
         EXPECT_NE(output.str().find("option name Threads type spin"), std::string::npos);
         EXPECT_NE(output.str().find("Threads=1"), std::string::npos);
         EXPECT_NE(output.str().find("uciok"), std::string::npos);

@@ -38,6 +38,11 @@ namespace aurora::chess
         return evaluator_.path();
     }
 
+    bool Engine::use_nnue() const noexcept
+    {
+        return use_nnue_;
+    }
+
     void Engine::set_position(std::string_view fen)
     {
         board_.set_fen(fen);
@@ -72,6 +77,11 @@ namespace aurora::chess
         threads_.resize(threads);
     }
 
+    void Engine::set_use_nnue(bool enabled) noexcept
+    {
+        use_nnue_ = enabled;
+    }
+
     std::size_t Engine::thread_count() const noexcept
     {
         return threads_.size();
@@ -89,7 +99,7 @@ namespace aurora::chess
 
     Score Engine::evaluate() const noexcept
     {
-        return evaluator_.evaluate(board_);
+        return use_nnue_ && evaluator_.is_loaded() ? evaluator_.evaluate(board_) : psqt_evaluator_.evaluate(board_);
     }
 
     std::uint64_t Engine::perft(std::size_t depth) const
@@ -101,6 +111,9 @@ namespace aurora::chess
     {
         limits.threads = thread_count();
         limits.thread_pool = &threads_;
-        return aurora::chess::search(board_, limits, ttable_, evaluator_);
+        const Evaluator& active_evaluator = use_nnue_ && evaluator_.is_loaded()
+                                                ? static_cast<const Evaluator&>(evaluator_)
+                                                : static_cast<const Evaluator&>(psqt_evaluator_);
+        return aurora::chess::search(board_, limits, ttable_, active_evaluator);
     }
 } // namespace aurora::chess

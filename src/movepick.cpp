@@ -65,7 +65,7 @@ namespace aurora::chess
             return static_cast<std::uint16_t>(std::clamp(score, Score{0}, kMaxMoveScore));
         }
 
-        void sort_by_score(std::vector<MoveEntry>& moves)
+        void sort_by_score(MoveList& moves)
         {
             std::sort(moves.begin(), moves.end(),
                       [](const MoveEntry& lhs, const MoveEntry& rhs) { return lhs.score < rhs.score; });
@@ -120,16 +120,14 @@ namespace aurora::chess
         return false;
     }
 
-    Move MovePicker::next_from_scored(std::vector<MoveEntry>& moves)
+    Move MovePicker::next_from_scored(MoveList& moves)
     {
         if (moves.empty())
         {
             return 0;
         }
 
-        const Move move = moves.back().move;
-        moves.pop_back();
-        return move;
+        return moves.pop_back().move;
     }
 
     void MovePicker::score_moves()
@@ -151,13 +149,13 @@ namespace aurora::chess
             {
                 const Score score = promotion_bonus(move_flag(move)) + 10 * captured_piece_value(board_, move) -
                                     moving_piece_value(board_, move);
-                (is_good_noisy(board_, move) ? good_noisy_ : bad_noisy_).push_back(MoveEntry{move, move_score(score)});
+                (is_good_noisy(board_, move) ? good_noisy_ : bad_noisy_).push(move, move_score(score));
             }
             else
             {
                 const Score score =
                     ordering_.history == nullptr ? 0 : (*ordering_.history)[static_cast<std::size_t>(move)];
-                quiets_.push_back(MoveEntry{move, move_score(score)});
+                quiets_.push(move, move_score(score));
             }
         }
 

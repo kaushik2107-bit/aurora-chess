@@ -200,6 +200,11 @@ namespace aurora::chess
             {},
         });
         options_.push_back(Entry{
+            "Use NNUE",
+            UciOption::check(false),
+            [](Engine& engine, const UciOption& option) { engine.set_use_nnue(option.as_bool()); },
+        });
+        options_.push_back(Entry{
             "Threads",
             UciOption::spin(1, 1, 128),
             [](Engine& engine, const UciOption& option)

@@ -22,6 +22,7 @@ namespace aurora::chess
         [[nodiscard]] std::string describe() const noexcept;
         [[nodiscard]] bool nnue_loaded() const noexcept;
         [[nodiscard]] std::string_view nnue_path() const noexcept;
+        [[nodiscard]] bool use_nnue() const noexcept;
 
         void set_position(std::string_view fen);
         bool make_move(Move move);
@@ -29,6 +30,7 @@ namespace aurora::chess
         void clear_hash();
         void set_hash_size_mb(std::size_t megabytes);
         void set_thread_count(std::size_t threads);
+        void set_use_nnue(bool enabled) noexcept;
         [[nodiscard]] std::size_t thread_count() const noexcept;
         [[nodiscard]] const Board& board() const noexcept;
         [[nodiscard]] MoveList legal_moves() const;
@@ -40,8 +42,10 @@ namespace aurora::chess
         std::string name_;
         Board board_;
         NnueEvaluator evaluator_;
+        PsqtEvaluator psqt_evaluator_;
         mutable TranspositionTable ttable_;
         mutable ThreadPool threads_;
+        bool use_nnue_{false};
     };
 
 } // namespace aurora::chess

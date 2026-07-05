@@ -45,6 +45,17 @@ namespace
         EXPECT_EQ(engine.thread_count(), 2u);
     }
 
+    TEST(UciOptionsTests, AppliesUseNnueOption)
+    {
+        aurora::chess::Engine engine{"Aurora"};
+        aurora::chess::UciOptions options;
+        const auto command = options.parse_setoption("setoption name Use NNUE value true");
+
+        ASSERT_TRUE(command.has_value());
+        EXPECT_TRUE(options.apply(engine, *command));
+        EXPECT_TRUE(engine.use_nnue());
+    }
+
     TEST(UciOptionsTests, RejectsInvalidTypedValues)
     {
         aurora::chess::Engine engine{"Aurora"};
@@ -77,6 +88,7 @@ namespace
 
         EXPECT_NE(output.str().find("option name Hash type spin"), std::string::npos);
         EXPECT_NE(output.str().find("option name Ponder type check"), std::string::npos);
+        EXPECT_NE(output.str().find("option name Use NNUE type check"), std::string::npos);
         EXPECT_NE(output.str().find("option name Threads type spin"), std::string::npos);
     }
 

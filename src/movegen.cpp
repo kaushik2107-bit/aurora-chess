@@ -13,12 +13,12 @@ namespace aurora::chess
     namespace
     {
 
-        void add_move(MoveList &out, Move move) noexcept
+        void add_move(MoveList& out, Move move) noexcept
         {
             out.push(move);
         }
 
-        void add_promotions(MoveList &out, Square from, Square to, bool capture)
+        void add_promotions(MoveList& out, Square from, Square to, bool capture)
         {
             add_move(out, make_move(from, to, capture ? MoveFlag::KnightPromotionCapture : MoveFlag::KnightPromotion));
             add_move(out, make_move(from, to, capture ? MoveFlag::BishopPromotionCapture : MoveFlag::BishopPromotion));
@@ -48,8 +48,7 @@ namespace aurora::chess
             const int file_step = sign(file_delta);
             const int rank_step = sign(rank_delta);
             Bitboard between = 0;
-            for (int file = from_file + file_step, rank = from_rank + rank_step;
-                 file != to_file || rank != to_rank;
+            for (int file = from_file + file_step, rank = from_rank + rank_step; file != to_file || rank != to_rank;
                  file += file_step, rank += rank_step)
             {
                 between |= bit(to_square(file, rank));
@@ -57,16 +56,15 @@ namespace aurora::chess
             return between;
         }
 
-        bool needs_full_legality_check(const Board &board, Move move) noexcept
+        bool needs_full_legality_check(const Board& board, Move move) noexcept
         {
             const Square from = move_from(move);
             const MoveFlag flag = move_flag(move);
             return is_castle(flag) || flag == MoveFlag::EnPassant ||
-                   piece_type(board.piece_on(from)) == PieceType::King ||
-                   (board.pinned() & bit(from)) != 0;
+                   piece_type(board.piece_on(from)) == PieceType::King || (board.pinned() & bit(from)) != 0;
         }
 
-        void add_if_legal(const Board &board, MoveList &moves, Move move)
+        void add_if_legal(const Board& board, MoveList& moves, Move move)
         {
             if (!needs_full_legality_check(board, move) || board.legal(move))
             {
@@ -74,7 +72,7 @@ namespace aurora::chess
             }
         }
 
-        void generate_pawn_moves(const Board &board, MoveList &moves, Bitboard target)
+        void generate_pawn_moves(const Board& board, MoveList& moves, Bitboard target)
         {
             const Color us = board.side_to_move();
             Bitboard pawns = board.piece_bb(PieceType::Pawn) & board.occupancy(us);
@@ -100,7 +98,8 @@ namespace aurora::chess
                         {
                             if (rank == promotion_rank)
                             {
-                                if ((board.pinned() & bit(from)) == 0 || board.legal(make_move(from, one, MoveFlag::QueenPromotion)))
+                                if ((board.pinned() & bit(from)) == 0 ||
+                                    board.legal(make_move(from, one, MoveFlag::QueenPromotion)))
                                 {
                                     add_promotions(moves, from, one, false);
                                 }
@@ -135,7 +134,8 @@ namespace aurora::chess
                     {
                         if (rank == promotion_rank)
                         {
-                            if ((board.pinned() & bit(from)) == 0 || board.legal(make_move(from, to, MoveFlag::QueenPromotionCapture)))
+                            if ((board.pinned() & bit(from)) == 0 ||
+                                board.legal(make_move(from, to, MoveFlag::QueenPromotionCapture)))
                             {
                                 add_promotions(moves, from, to, true);
                             }
@@ -147,7 +147,8 @@ namespace aurora::chess
                     }
                     else if (to == ep)
                     {
-                        const auto captured_square = static_cast<Square>(static_cast<int>(to) + (us == Color::White ? -8 : 8));
+                        const auto captured_square =
+                            static_cast<Square>(static_cast<int>(to) + (us == Color::White ? -8 : 8));
                         if ((board.checkers() == 0 || ((bit(to) | bit(captured_square)) & target) != 0) &&
                             board.legal(make_move(from, to, MoveFlag::EnPassant)))
                         {
@@ -160,8 +161,7 @@ namespace aurora::chess
             }
         }
 
-        template <PieceType Type>
-        void generate_piece_moves(const Board &board, MoveList &moves, Bitboard target)
+        template <PieceType Type> void generate_piece_moves(const Board& board, MoveList& moves, Bitboard target)
         {
             Bitboard pieces = board.piece_bb(Type) & board.occupancy(board.side_to_move());
             const Bitboard enemies = board.occupancy(~board.side_to_move());
@@ -204,7 +204,7 @@ namespace aurora::chess
             }
         }
 
-        void generate_king_moves(const Board &board, MoveList &moves)
+        void generate_king_moves(const Board& board, MoveList& moves)
         {
             const Color us = board.side_to_move();
             const Square from = board.king_square(us);
@@ -235,15 +235,14 @@ namespace aurora::chess
             if (us == Color::White && from == Square::E1)
             {
                 if (has_castling(board.castling_rights(), CastlingRights::WhiteKingSide) &&
-                    board.piece_on(Square::H1) == Piece::WhiteRook &&
-                    board.is_empty(Square::F1) && board.is_empty(Square::G1) &&
-                    board.legal(make_move(Square::E1, Square::G1, MoveFlag::KingCastle)))
+                    board.piece_on(Square::H1) == Piece::WhiteRook && board.is_empty(Square::F1) &&
+                    board.is_empty(Square::G1) && board.legal(make_move(Square::E1, Square::G1, MoveFlag::KingCastle)))
                 {
                     add_move(moves, make_move(Square::E1, Square::G1, MoveFlag::KingCastle));
                 }
                 if (has_castling(board.castling_rights(), CastlingRights::WhiteQueenSide) &&
-                    board.piece_on(Square::A1) == Piece::WhiteRook &&
-                    board.is_empty(Square::D1) && board.is_empty(Square::C1) && board.is_empty(Square::B1) &&
+                    board.piece_on(Square::A1) == Piece::WhiteRook && board.is_empty(Square::D1) &&
+                    board.is_empty(Square::C1) && board.is_empty(Square::B1) &&
                     board.legal(make_move(Square::E1, Square::C1, MoveFlag::QueenCastle)))
                 {
                     add_move(moves, make_move(Square::E1, Square::C1, MoveFlag::QueenCastle));
@@ -252,15 +251,14 @@ namespace aurora::chess
             else if (us == Color::Black && from == Square::E8)
             {
                 if (has_castling(board.castling_rights(), CastlingRights::BlackKingSide) &&
-                    board.piece_on(Square::H8) == Piece::BlackRook &&
-                    board.is_empty(Square::F8) && board.is_empty(Square::G8) &&
-                    board.legal(make_move(Square::E8, Square::G8, MoveFlag::KingCastle)))
+                    board.piece_on(Square::H8) == Piece::BlackRook && board.is_empty(Square::F8) &&
+                    board.is_empty(Square::G8) && board.legal(make_move(Square::E8, Square::G8, MoveFlag::KingCastle)))
                 {
                     add_move(moves, make_move(Square::E8, Square::G8, MoveFlag::KingCastle));
                 }
                 if (has_castling(board.castling_rights(), CastlingRights::BlackQueenSide) &&
-                    board.piece_on(Square::A8) == Piece::BlackRook &&
-                    board.is_empty(Square::D8) && board.is_empty(Square::C8) && board.is_empty(Square::B8) &&
+                    board.piece_on(Square::A8) == Piece::BlackRook && board.is_empty(Square::D8) &&
+                    board.is_empty(Square::C8) && board.is_empty(Square::B8) &&
                     board.legal(make_move(Square::E8, Square::C8, MoveFlag::QueenCastle)))
                 {
                     add_move(moves, make_move(Square::E8, Square::C8, MoveFlag::QueenCastle));
@@ -278,6 +276,15 @@ namespace aurora::chess
         }
     }
 
+    MoveEntry MoveList::pop_back() noexcept
+    {
+        if (count_ == 0)
+        {
+            return {};
+        }
+        return moves_[--count_];
+    }
+
     std::size_t MoveList::size() const noexcept
     {
         return count_;
@@ -288,27 +295,27 @@ namespace aurora::chess
         return count_ == 0;
     }
 
-    MoveEntry *MoveList::begin() noexcept
+    MoveEntry* MoveList::begin() noexcept
     {
         return moves_.data();
     }
 
-    MoveEntry *MoveList::end() noexcept
+    MoveEntry* MoveList::end() noexcept
     {
         return moves_.data() + count_;
     }
 
-    const MoveEntry *MoveList::begin() const noexcept
+    const MoveEntry* MoveList::begin() const noexcept
     {
         return moves_.data();
     }
 
-    const MoveEntry *MoveList::end() const noexcept
+    const MoveEntry* MoveList::end() const noexcept
     {
         return moves_.data() + count_;
     }
 
-    MoveList MoveGenerator::generate(const Board &board)
+    MoveList MoveGenerator::generate(const Board& board)
     {
         MoveList moves;
 

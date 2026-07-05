@@ -371,13 +371,17 @@ namespace aurora::chess
             options.write(output, engine);
             output << "info string Options Hash=" << options.hash_mb() << "MB Threads=" << engine.thread_count()
                    << " Ponder=" << (options.ponder() ? "true" : "false") << '\n';
-            if (engine.nnue_loaded())
+            if (engine.use_nnue() && engine.nnue_loaded())
             {
-                output << "info string Evaluation NNUE file " << engine.nnue_path() << '\n';
+                output << "info string Evaluation NNUE active file " << engine.nnue_path() << '\n';
+            }
+            else if (engine.nnue_loaded())
+            {
+                output << "info string Evaluation PSQT active, NNUE available file " << engine.nnue_path() << '\n';
             }
             else
             {
-                output << "info string Evaluation PSQT fallback\n";
+                output << "info string Evaluation PSQT active\n";
             }
             output << "uciok\n" << std::flush;
         }

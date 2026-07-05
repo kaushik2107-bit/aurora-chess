@@ -38,15 +38,15 @@ namespace aurora::chess
         };
 
         [[nodiscard]] bool contains(Move move) const noexcept;
-        [[nodiscard]] Move next_from_scored(std::vector<MoveEntry>& moves);
+        [[nodiscard]] Move next_from_scored(MoveList& moves);
         void score_moves();
 
         const Board& board_;
         MoveOrdering ordering_;
         MoveList moves_;
-        std::vector<MoveEntry> good_noisy_;
-        std::vector<MoveEntry> bad_noisy_;
-        std::vector<MoveEntry> quiets_;
+        MoveList good_noisy_;
+        MoveList bad_noisy_;
+        MoveList quiets_;
         Stage stage_{Stage::TtMove};
         std::size_t killer_index_{0};
         bool generated_any_{false};
