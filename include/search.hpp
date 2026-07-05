@@ -26,6 +26,7 @@ namespace aurora::chess
         std::uint64_t nodes{0};
         std::size_t depth{0};
         std::size_t selective_depth{0};
+        bool completed{true};
     };
 
     struct SearchLimits

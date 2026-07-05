@@ -249,6 +249,7 @@ namespace aurora::chess
         SearchResult SearchWorker::search(const Board& board)
         {
             SearchResult result;
+            SearchIteration fallback;
             Board working = board;
             reset_accumulator(working);
             const std::size_t max_depth = std::max<std::size_t>(1, limits_.depth);
@@ -296,8 +297,12 @@ namespace aurora::chess
                     delta += delta / 2 + 8;
                 }
 
-                if (stopped() && iteration.best_move == 0)
+                if (!iteration.completed)
                 {
+                    if (result.best_move == 0 && iteration.best_move != 0)
+                    {
+                        fallback = iteration;
+                    }
                     break;
                 }
 
@@ -313,6 +318,20 @@ namespace aurora::chess
                 {
                     limits_.on_iteration(iteration);
                 }
+
+                if (stopped())
+                {
+                    break;
+                }
+            }
+
+            if (result.best_move == 0 && fallback.best_move != 0)
+            {
+                result.best_move = fallback.best_move;
+                result.pv = fallback.pv;
+                result.score = fallback.score;
+                result.nodes = fallback.nodes;
+                result.selective_depth = fallback.selective_depth;
             }
 
             return result;
@@ -351,11 +370,13 @@ namespace aurora::chess
             Score best_score = -kInfiniteScore;
             const Score original_alpha = alpha;
             const std::size_t first_move = state_.worker_id == 0 ? 0 : state_.worker_id % root_moves.size();
+            bool completed = true;
 
             for (std::size_t searched = 0; searched < root_moves.size(); ++searched)
             {
                 if (stopped())
                 {
+                    completed = false;
                     break;
                 }
 
@@ -368,6 +389,12 @@ namespace aurora::chess
                 std::vector<Move> child_pv;
                 const Score score = -alpha_beta(board, depth - 1, -beta, -alpha, 1, child_pv);
                 undo_search_move(board);
+
+                if (stopped())
+                {
+                    completed = false;
+                    break;
+                }
 
                 if (score > best_score)
                 {
@@ -383,7 +410,7 @@ namespace aurora::chess
             }
 
             const Score score = best_move == 0 ? (board.checkers() != 0 ? -kMateScore : 0) : best_score;
-            if (best_move != 0)
+            if (best_move != 0 && completed)
             {
                 const Bound bound = score <= original_alpha ? Bound::Upper
                                     : score >= beta         ? Bound::Lower
@@ -392,7 +419,7 @@ namespace aurora::chess
             }
 
             return SearchIteration{
-                best_move, best_pv, score, state_.nodes, depth, state_.selective_depth,
+                best_move, best_pv, score, state_.nodes, depth, state_.selective_depth, completed,
             };
         }
 
@@ -645,6 +672,11 @@ namespace aurora::chess
 
                 undo_search_move(board);
 
+                if (stopped())
+                {
+                    break;
+                }
+
                 best_score = std::max(best_score, score);
                 if (score > alpha)
                 {
@@ -732,6 +764,11 @@ namespace aurora::chess
                 std::vector<Move> child_pv;
                 const Score score = -quiescence(board, -beta, -alpha, ply + 1, child_pv);
                 undo_search_move(board);
+
+                if (stopped())
+                {
+                    break;
+                }
 
                 if (score >= beta)
                 {

@@ -9,6 +9,25 @@
 namespace
 {
 
+    class StopDuringEvaluation final : public aurora::chess::Evaluator
+    {
+    public:
+        explicit StopDuringEvaluation(std::atomic_bool& stop) : stop_(stop) {}
+
+        [[nodiscard]] aurora::chess::Score evaluate(const aurora::chess::Board&) const noexcept override
+        {
+            if (evaluations_.fetch_add(1, std::memory_order_relaxed) >= 1)
+            {
+                stop_.store(true, std::memory_order_relaxed);
+            }
+            return 0;
+        }
+
+    private:
+        std::atomic_bool& stop_;
+        mutable std::atomic_size_t evaluations_{0};
+    };
+
     TEST(SearchTests, FindsALegalMoveFromInitialPosition)
     {
         const aurora::chess::Board board;
@@ -99,6 +118,31 @@ namespace
 
         EXPECT_EQ(result.depth, 0u);
         EXPECT_EQ(result.best_move, 0);
+    }
+
+    TEST(SearchTests, DoesNotPublishStoppedIteration)
+    {
+        const aurora::chess::Board board;
+        aurora::chess::TranspositionTable table{};
+        std::atomic_bool stop{false};
+        std::atomic_bool callback_after_stop{false};
+        const StopDuringEvaluation evaluator{stop};
+
+        aurora::chess::SearchLimits limits;
+        limits.depth = 6;
+        limits.stop = &stop;
+        limits.on_iteration = [&callback_after_stop, &stop](const aurora::chess::SearchIteration&)
+        {
+            if (stop.load(std::memory_order_relaxed))
+            {
+                callback_after_stop.store(true, std::memory_order_relaxed);
+            }
+        };
+
+        const auto result = aurora::chess::search(board, limits, table, evaluator);
+
+        EXPECT_FALSE(callback_after_stop.load(std::memory_order_relaxed));
+        EXPECT_TRUE(result.iterations.empty() || result.depth == result.iterations.back().depth);
     }
 
 } // namespace
