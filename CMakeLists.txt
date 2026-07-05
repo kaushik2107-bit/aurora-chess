@@ -80,6 +80,7 @@ endfunction()
 add_library(aurora_chess STATIC
     src/engine.cpp
     src/uci.cpp
+    src/ucioptions.cpp
     src/attacks.cpp
     src/board.cpp
     src/evaluation.cpp
@@ -130,6 +131,7 @@ add_executable(aurora_chess_tests
     tests/test_speed.cpp
     tests/test_ttable.cpp
     tests/test_uci.cpp
+    tests/test_ucioptions.cpp
 )
 
 target_link_libraries(aurora_chess_tests PRIVATE aurora_chess GTest::gtest_main)

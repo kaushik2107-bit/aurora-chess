@@ -4,6 +4,7 @@
 #include "movegen.hpp"
 #include "perft.hpp"
 #include "speed.hpp"
+#include "ucioptions.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -129,10 +130,13 @@ namespace aurora::chess
                    << std::flush;
         }
 
-        void print_search_info(std::ostream& output, const SearchIteration& iteration)
+        void print_search_info(std::ostream& output, const SearchIteration& iteration,
+                               std::chrono::steady_clock::duration elapsed)
         {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
             output << "info depth " << iteration.depth << " seldepth " << iteration.selective_depth << " score cp "
-                   << iteration.score << " nodes " << iteration.nodes;
+                   << iteration.score << " nodes " << iteration.nodes << " nps "
+                   << nodes_per_second(iteration.nodes, elapsed) << " time " << std::max<std::int64_t>(1, elapsed_ms);
             if (!iteration.pv.empty())
             {
                 output << " pv";
@@ -192,19 +196,6 @@ namespace aurora::chess
             std::optional<int> moves_to_go;
             std::optional<int> move_time;
             std::optional<int> nodes;
-        };
-
-        struct SetOptionCommand
-        {
-            std::string name;
-            std::string value;
-        };
-
-        struct UciState
-        {
-            bool debug{false};
-            bool ponder{false};
-            std::size_t hash_mb{16};
         };
 
         [[nodiscard]] std::optional<PositionCommand> parse_position(std::string_view command)
@@ -347,35 +338,6 @@ namespace aurora::chess
             return go;
         }
 
-        [[nodiscard]] std::optional<SetOptionCommand> parse_setoption(std::string_view command)
-        {
-            std::string rest = trim(std::string{command.substr(std::string_view{"setoption"}.size())});
-            constexpr std::string_view name_prefix = "name ";
-            if (rest.rfind(name_prefix, 0) != 0)
-            {
-                return std::nullopt;
-            }
-
-            rest.erase(0, name_prefix.size());
-            const auto value_pos = rest.find(" value ");
-            SetOptionCommand option;
-            if (value_pos == std::string::npos)
-            {
-                option.name = trim(rest);
-            }
-            else
-            {
-                option.name = trim(rest.substr(0, value_pos));
-                option.value = trim(rest.substr(value_pos + std::string_view{" value "}.size()));
-            }
-
-            if (option.name.empty())
-            {
-                return std::nullopt;
-            }
-            return option;
-        }
-
         bool play_uci_move(Engine& engine, std::string_view move_text)
         {
             const auto moves = engine.legal_moves();
@@ -389,54 +351,21 @@ namespace aurora::chess
             return false;
         }
 
-        void print_uci(std::ostream& output, const Engine& engine, const UciState& state)
+        void print_uci(std::ostream& output, const Engine& engine, const UciOptions& options)
         {
-            output << "id name " << engine.name() << '\n'
-                   << "id author Aurora\n"
-                   << "option name Hash type spin default " << state.hash_mb << " min 1 max 1024\n"
-                   << "option name Clear Hash type button\n"
-                   << "option name Ponder type check default false\n"
-                   << "option name Threads type spin default " << engine.thread_count() << " min 1 max 128\n";
+            output << "id name " << engine.name() << '\n' << "id author Aurora\n";
+            options.write(output, engine);
+            output << "info string Options Hash=" << options.hash_mb() << "MB Threads=" << engine.thread_count()
+                   << " Ponder=" << (options.ponder() ? "true" : "false") << '\n';
             if (engine.nnue_loaded())
             {
-                output << "info string NNUE evaluation using " << engine.nnue_path() << '\n';
+                output << "info string Evaluation NNUE file " << engine.nnue_path() << '\n';
             }
             else
             {
-                output << "info string NNUE evaluation unavailable, using PSQT\n";
+                output << "info string Evaluation PSQT fallback\n";
             }
             output << "uciok\n" << std::flush;
-        }
-
-        void apply_option(Engine& engine, UciState& state, const SetOptionCommand& option)
-        {
-            std::string name = option.name;
-            std::transform(name.begin(), name.end(), name.begin(),
-                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-
-            if (name == "hash")
-            {
-                if (const auto hash = parse_size(option.value))
-                {
-                    state.hash_mb = std::clamp<std::size_t>(*hash, 1, 1024);
-                    engine.set_hash_size_mb(state.hash_mb);
-                }
-            }
-            else if (name == "clear hash")
-            {
-                engine.clear_hash();
-            }
-            else if (name == "ponder")
-            {
-                state.ponder = option.value == "true" || option.value == "1";
-            }
-            else if (name == "threads")
-            {
-                if (const auto threads = parse_size(option.value))
-                {
-                    engine.set_thread_count(std::clamp<std::size_t>(*threads, 1, 128));
-                }
-            }
         }
 
         void run_perft_command(const Engine& engine, std::ostream& output, std::size_t depth)
@@ -508,12 +437,11 @@ namespace aurora::chess
                         limits.depth = go.depth;
                         limits.quiescence_depth = go.quiescence_depth;
                         limits.stop = &stop_;
-                        std::optional<SearchIteration> last_reported;
-                        limits.on_iteration = [&output, &output_mutex, &last_reported](const SearchIteration& iteration)
+                        const auto search_start = std::chrono::steady_clock::now();
+                        limits.on_iteration = [&output, &output_mutex, search_start](const SearchIteration& iteration)
                         {
-                            last_reported = iteration;
                             std::lock_guard lock{output_mutex};
-                            print_search_info(output, iteration);
+                            print_search_info(output, iteration, std::chrono::steady_clock::now() - search_start);
                         };
 
                         const auto result = engine.search(limits);
@@ -527,19 +455,6 @@ namespace aurora::chess
                             }
                         }
                         std::lock_guard lock{output_mutex};
-                        if (!result.iterations.empty())
-                        {
-                            const SearchIteration& final_iteration = result.iterations.back();
-                            const bool already_reported = last_reported.has_value() &&
-                                                          last_reported->best_move == final_iteration.best_move &&
-                                                          last_reported->score == final_iteration.score &&
-                                                          last_reported->depth == final_iteration.depth &&
-                                                          last_reported->pv == final_iteration.pv;
-                            if (!already_reported)
-                            {
-                                print_search_info(output, final_iteration);
-                            }
-                        }
                         output << "bestmove " << (best_move == 0 ? "0000" : move_to_uci(best_move)) << '\n'
                                << std::flush;
                     });
@@ -587,7 +502,7 @@ namespace aurora::chess
 
     void run_uci_loop(Engine& engine, std::istream& input, std::ostream& output)
     {
-        UciState state;
+        UciOptions options;
         std::mutex output_mutex;
         SearchController search;
         std::string line;
@@ -607,7 +522,7 @@ namespace aurora::chess
             else if (command == "uci")
             {
                 std::lock_guard lock{output_mutex};
-                print_uci(output, engine, state);
+                print_uci(output, engine, options);
             }
             else if (command == "ucinewgame")
             {
@@ -616,14 +531,20 @@ namespace aurora::chess
             }
             else if (command.rfind("debug ", 0) == 0)
             {
-                state.debug = command == "debug on";
+                options.set_debug(command == "debug on");
             }
             else if (command.rfind("setoption ", 0) == 0)
             {
                 search.stop_and_wait();
-                if (const auto option = parse_setoption(command))
+                if (const auto option = options.parse_setoption(command))
                 {
-                    apply_option(engine, state, *option);
+                    const bool applied = options.apply(engine, *option);
+                    if (options.debug())
+                    {
+                        std::lock_guard lock{output_mutex};
+                        output << "info string setoption " << option->name << (applied ? " ok" : " ignored") << '\n'
+                               << std::flush;
+                    }
                 }
             }
             else if (command.rfind("position ", 0) == 0)
