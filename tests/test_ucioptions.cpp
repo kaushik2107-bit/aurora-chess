@@ -43,6 +43,11 @@ namespace
         ASSERT_TRUE(threads.has_value());
         EXPECT_TRUE(options.apply(engine, *threads));
         EXPECT_EQ(engine.thread_count(), 2u);
+
+        const auto overhead = options.parse_setoption("setoption name Move Overhead value 75");
+        ASSERT_TRUE(overhead.has_value());
+        EXPECT_TRUE(options.apply(engine, *overhead));
+        EXPECT_EQ(options.move_overhead_ms(), 75);
     }
 
     TEST(UciOptionsTests, AppliesUseNnueOption)
@@ -88,6 +93,7 @@ namespace
 
         EXPECT_NE(output.str().find("option name Hash type spin"), std::string::npos);
         EXPECT_NE(output.str().find("option name Ponder type check"), std::string::npos);
+        EXPECT_NE(output.str().find("option name Move Overhead type spin"), std::string::npos);
         EXPECT_NE(output.str().find("option name Use NNUE type check"), std::string::npos);
         EXPECT_NE(output.str().find("option name Threads type spin"), std::string::npos);
     }

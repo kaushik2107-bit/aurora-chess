@@ -11,11 +11,27 @@
 namespace aurora::chess
 {
 
+    inline constexpr std::size_t kPieceSquareHistoryBuckets = 12 * 64;
+    inline constexpr std::size_t kNoPieceSquareHistory = kPieceSquareHistoryBuckets;
+
+    [[nodiscard]] constexpr std::size_t piece_square_history_index(Piece piece, Square square) noexcept
+    {
+        if (piece == Piece::None || square == Square::NoSquare)
+        {
+            return kNoPieceSquareHistory;
+        }
+
+        return (static_cast<std::size_t>(piece) - 1) * 64 + static_cast<std::size_t>(square);
+    }
+
     struct MoveOrdering
     {
         Move tt_move{0};
+        Move counter_move{0};
         std::array<Move, 2> killers{};
         const std::vector<int>* history{nullptr};
+        const std::vector<int>* continuation_history{nullptr};
+        std::size_t previous_piece_square{kNoPieceSquareHistory};
     };
 
     class MovePicker
@@ -32,6 +48,7 @@ namespace aurora::chess
             TtMove,
             GoodNoisy,
             Killers,
+            CounterMove,
             Quiets,
             BadNoisy,
             Done,

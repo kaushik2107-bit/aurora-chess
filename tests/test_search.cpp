@@ -3,6 +3,7 @@
 #include "movegen.hpp"
 
 #include <atomic>
+#include <chrono>
 
 #include <gtest/gtest.h>
 
@@ -113,6 +114,20 @@ namespace
         aurora::chess::SearchLimits limits;
         limits.depth = 6;
         limits.stop = &stop;
+
+        const auto result = aurora::chess::search(board, limits, table);
+
+        EXPECT_EQ(result.depth, 0u);
+        EXPECT_EQ(result.best_move, 0);
+    }
+
+    TEST(SearchTests, ObservesExpiredDeadline)
+    {
+        const aurora::chess::Board board;
+        aurora::chess::TranspositionTable table{};
+        aurora::chess::SearchLimits limits;
+        limits.depth = 6;
+        limits.deadline = std::chrono::steady_clock::now();
 
         const auto result = aurora::chess::search(board, limits, table);
 

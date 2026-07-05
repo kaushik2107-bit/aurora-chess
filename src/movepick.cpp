@@ -65,6 +65,25 @@ namespace aurora::chess
             return static_cast<std::uint16_t>(std::clamp(score, Score{0}, kMaxMoveScore));
         }
 
+        [[nodiscard]] int continuation_score(const Board& board, Move move, const MoveOrdering& ordering) noexcept
+        {
+            if (ordering.continuation_history == nullptr || ordering.previous_piece_square == kNoPieceSquareHistory)
+            {
+                return 0;
+            }
+
+            const std::size_t current_piece_square =
+                piece_square_history_index(board.piece_on(move_from(move)), move_to(move));
+            if (current_piece_square == kNoPieceSquareHistory)
+            {
+                return 0;
+            }
+
+            const std::size_t index =
+                ordering.previous_piece_square * kPieceSquareHistoryBuckets + current_piece_square;
+            return (*ordering.continuation_history)[index];
+        }
+
         void sort_by_score(MoveList& moves)
         {
             std::sort(moves.begin(), moves.end(),
@@ -145,6 +164,11 @@ namespace aurora::chess
                 continue;
             }
 
+            if (same_move(move, ordering_.counter_move))
+            {
+                continue;
+            }
+
             if (is_noisy(move))
             {
                 const Score score = promotion_bonus(move_flag(move)) + 10 * captured_piece_value(board_, move) -
@@ -153,8 +177,8 @@ namespace aurora::chess
             }
             else
             {
-                const Score score =
-                    ordering_.history == nullptr ? 0 : (*ordering_.history)[static_cast<std::size_t>(move)];
+                Score score = ordering_.history == nullptr ? 0 : (*ordering_.history)[static_cast<std::size_t>(move)];
+                score += continuation_score(board_, move, ordering_);
                 quiets_.push(move, move_score(score));
             }
         }
@@ -194,7 +218,16 @@ namespace aurora::chess
                         return move;
                     }
                 }
+                stage_ = Stage::CounterMove;
+                break;
+            case Stage::CounterMove:
                 stage_ = Stage::Quiets;
+                if (ordering_.counter_move != ordering_.tt_move && ordering_.counter_move != ordering_.killers[0] &&
+                    ordering_.counter_move != ordering_.killers[1] && !is_noisy(ordering_.counter_move) &&
+                    contains(ordering_.counter_move))
+                {
+                    return ordering_.counter_move;
+                }
                 break;
             case Stage::Quiets:
                 if (const Move move = next_from_scored(quiets_); move != 0)

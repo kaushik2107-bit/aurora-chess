@@ -92,6 +92,7 @@ add_library(aurora_chess STATIC
     src/search.cpp
     src/see.cpp
     src/speed.cpp
+    src/timeman.cpp
     src/thread.cpp
     src/ttable.cpp
     src/zobrist.cpp
@@ -130,6 +131,7 @@ add_executable(aurora_chess_tests
     tests/test_search.cpp
     tests/test_see.cpp
     tests/test_speed.cpp
+    tests/test_timeman.cpp
     tests/test_ttable.cpp
     tests/test_uci.cpp
     tests/test_ucioptions.cpp

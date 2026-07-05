@@ -64,6 +64,7 @@ namespace aurora::chess
         [[nodiscard]] bool debug() const noexcept;
         [[nodiscard]] bool ponder() const noexcept;
         [[nodiscard]] std::size_t hash_mb() const noexcept;
+        [[nodiscard]] int move_overhead_ms() const noexcept;
 
         void set_debug(bool enabled) noexcept;
         [[nodiscard]] std::optional<SetOptionCommand> parse_setoption(std::string_view command) const;

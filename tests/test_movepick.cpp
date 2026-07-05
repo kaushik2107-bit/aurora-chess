@@ -1,6 +1,7 @@
 #include "movepick.hpp"
 
 #include <array>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -68,6 +69,40 @@ namespace
         aurora::chess::MovePicker picker{board, ordering};
 
         EXPECT_EQ(picker.next(), killer);
+    }
+
+    TEST(MovePickerTests, ReturnsCounterMoveBeforeOrdinaryQuiets)
+    {
+        const aurora::chess::Board board;
+        const auto counter = aurora::chess::make_move(aurora::chess::Square::B1, aurora::chess::Square::C3);
+        aurora::chess::MoveOrdering ordering;
+        ordering.counter_move = counter;
+
+        aurora::chess::MovePicker picker{board, ordering};
+
+        EXPECT_EQ(picker.next(), counter);
+        EXPECT_NE(picker.next(), counter);
+    }
+
+    TEST(MovePickerTests, UsesContinuationHistoryForQuietOrdering)
+    {
+        const aurora::chess::Board board;
+        const auto preferred = aurora::chess::make_move(aurora::chess::Square::B1, aurora::chess::Square::C3);
+        const auto previous =
+            aurora::chess::piece_square_history_index(aurora::chess::Piece::BlackPawn, aurora::chess::Square::E5);
+        const auto current =
+            aurora::chess::piece_square_history_index(aurora::chess::Piece::WhiteKnight, aurora::chess::Square::C3);
+        std::vector<int> continuation_history(aurora::chess::kPieceSquareHistoryBuckets *
+                                              aurora::chess::kPieceSquareHistoryBuckets);
+        continuation_history[previous * aurora::chess::kPieceSquareHistoryBuckets + current] = 10'000;
+
+        aurora::chess::MoveOrdering ordering;
+        ordering.continuation_history = &continuation_history;
+        ordering.previous_piece_square = previous;
+
+        aurora::chess::MovePicker picker{board, ordering};
+
+        EXPECT_EQ(picker.next(), preferred);
     }
 
     TEST(MovePickerTests, DelaysSeeLosingCapturesUntilAfterQuiets)

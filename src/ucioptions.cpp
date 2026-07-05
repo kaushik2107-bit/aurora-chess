@@ -18,8 +18,7 @@ namespace aurora::chess
         [[nodiscard]] bool equal_uci_name(std::string_view lhs, std::string_view rhs) noexcept
         {
             return lhs.size() == rhs.size() && std::equal(lhs.begin(), lhs.end(), rhs.begin(),
-                                                          [](char a, char b)
-                                                          {
+                                                          [](char a, char b) {
                                                               return std::tolower(static_cast<unsigned char>(a)) ==
                                                                      std::tolower(static_cast<unsigned char>(b));
                                                           });
@@ -201,6 +200,11 @@ namespace aurora::chess
             {},
         });
         options_.push_back(Entry{
+            "Move Overhead",
+            UciOption::spin(20, 0, 5000),
+            {},
+        });
+        options_.push_back(Entry{
             "Use NNUE",
             UciOption::check(true),
             [](Engine& engine, const UciOption& option) { engine.set_use_nnue(option.as_bool()); },
@@ -228,6 +232,12 @@ namespace aurora::chess
     {
         const Entry* entry = find("Hash");
         return entry == nullptr ? 16 : static_cast<std::size_t>(entry->option.as_int());
+    }
+
+    int UciOptions::move_overhead_ms() const noexcept
+    {
+        const Entry* entry = find("Move Overhead");
+        return entry == nullptr ? 20 : entry->option.as_int();
     }
 
     void UciOptions::set_debug(bool enabled) noexcept

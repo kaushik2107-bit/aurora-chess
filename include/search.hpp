@@ -1,9 +1,11 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "board.hpp"
@@ -37,7 +39,9 @@ namespace aurora::chess
         std::size_t worker_id{0};
         std::atomic_bool* stop{nullptr};
         std::atomic_uint64_t* shared_nodes{nullptr};
+        std::atomic<std::int64_t>* shared_deadline_ms{nullptr};
         ThreadPool* thread_pool{nullptr};
+        std::optional<std::chrono::steady_clock::time_point> deadline{};
         std::function<void(const SearchIteration&)> on_iteration{};
     };
 

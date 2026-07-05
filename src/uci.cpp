@@ -4,6 +4,7 @@
 #include "movegen.hpp"
 #include "perft.hpp"
 #include "speed.hpp"
+#include "timeman.hpp"
 #include "ucioptions.hpp"
 
 #include <algorithm>
@@ -153,6 +154,11 @@ namespace aurora::chess
             output << '\n' << std::flush;
         }
 
+        [[nodiscard]] std::int64_t deadline_ms(std::chrono::steady_clock::time_point time) noexcept
+        {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()).count();
+        }
+
         [[nodiscard]] Move ponder_move_from_result(const SearchResult& result, Move best_move) noexcept
         {
             if (best_move == 0 || result.pv.size() < 2 || result.pv.front() != best_move)
@@ -208,6 +214,14 @@ namespace aurora::chess
             std::optional<int> move_time;
             std::optional<int> nodes;
         };
+
+        [[nodiscard]] TimeControl time_control_from_go(const GoCommand& go, int move_overhead_ms) noexcept
+        {
+            return TimeControl{
+                go.white_time,  go.black_time, go.white_increment, go.black_increment,
+                go.moves_to_go, go.move_time,  move_overhead_ms,
+            };
+        }
 
         [[nodiscard]] std::optional<PositionCommand> parse_position(std::string_view command)
         {
@@ -444,31 +458,60 @@ namespace aurora::chess
             SearchController() = default;
 
             void start(Engine& engine, std::ostream& output, std::mutex& output_mutex, GoCommand go,
-                       bool ponder_enabled)
+                       bool ponder_enabled, int move_overhead_ms)
             {
                 stop_and_wait();
                 stop_.store(false, std::memory_order_relaxed);
+                deadline_ms_.store(0, std::memory_order_relaxed);
                 const bool ponder_search = go.ponder && ponder_enabled;
+                const auto search_start = std::chrono::steady_clock::now();
+                const auto time_plan = go.infinite ? TimePlan{}
+                                                   : plan_time(time_control_from_go(go, move_overhead_ms),
+                                                               engine.board().side_to_move(), ponder_search);
                 {
                     std::lock_guard lock{mutex_};
                     pondering_ = ponder_search;
                     ponder_released_ = !ponder_search;
                     infinite_ = go.infinite || ponder_search;
+                    time_plan_ = time_plan;
+                    managed_clock_start_ = search_start;
+                }
+                if (time_plan.active && !ponder_search)
+                {
+                    deadline_ms_.store(deadline_ms(search_start + time_plan.maximum), std::memory_order_relaxed);
                 }
                 worker_ = std::thread(
-                    [this, &engine, &output, &output_mutex, go, ponder_enabled, ponder_search]
+                    [this, &engine, &output, &output_mutex, go, ponder_enabled, ponder_search, time_plan, search_start]
                     {
                         constexpr std::size_t kOpenEndedSearchDepth = 64;
+                        const bool use_open_depth = (go.infinite || ponder_search || time_plan.active) && !go.depth_set;
                         SearchLimits limits;
-                        limits.depth =
-                            (go.infinite || ponder_search) && !go.depth_set ? kOpenEndedSearchDepth : go.depth;
+                        limits.depth = use_open_depth ? kOpenEndedSearchDepth : go.depth;
                         limits.quiescence_depth = go.quiescence_depth;
                         limits.stop = &stop_;
-                        const auto search_start = std::chrono::steady_clock::now();
-                        limits.on_iteration = [&output, &output_mutex, search_start](const SearchIteration& iteration)
+                        if (time_plan.active)
                         {
+                            limits.shared_deadline_ms = &deadline_ms_;
+                        }
+                        limits.on_iteration = [this, &output, &output_mutex, search_start, time_plan,
+                                               ponder_search](const SearchIteration& iteration)
+                        {
+                            const auto now = std::chrono::steady_clock::now();
+                            const auto elapsed = now - search_start;
+                            bool stop_on_soft_time = false;
+                            if (time_plan.active)
+                            {
+                                std::lock_guard time_lock{mutex_};
+                                const bool clock_running = !ponder_search || ponder_released_;
+                                stop_on_soft_time = clock_running && now - managed_clock_start_ >= time_plan.optimum;
+                            }
+
                             std::lock_guard lock{output_mutex};
-                            print_search_info(output, iteration, std::chrono::steady_clock::now() - search_start);
+                            print_search_info(output, iteration, elapsed);
+                            if (stop_on_soft_time)
+                            {
+                                stop_.store(true, std::memory_order_relaxed);
+                            }
                         };
 
                         const auto result = engine.search(limits);
@@ -503,7 +546,19 @@ namespace aurora::chess
 
             void ponderhit()
             {
-                release_ponder();
+                const auto now = std::chrono::steady_clock::now();
+                {
+                    std::lock_guard lock{mutex_};
+                    if (pondering_ && time_plan_.active)
+                    {
+                        managed_clock_start_ = now;
+                        deadline_ms_.store(deadline_ms(now + time_plan_.maximum), std::memory_order_relaxed);
+                    }
+                    ponder_released_ = true;
+                    pondering_ = false;
+                    infinite_ = false;
+                }
+                cv_.notify_all();
             }
 
             void wait_or_stop_for_quit()
@@ -543,7 +598,9 @@ namespace aurora::chess
                     ponder_released_ = true;
                     pondering_ = false;
                     infinite_ = false;
+                    time_plan_ = {};
                 }
+                deadline_ms_.store(0, std::memory_order_relaxed);
                 cv_.notify_all();
             }
 
@@ -554,9 +611,12 @@ namespace aurora::chess
             }
 
             std::atomic_bool stop_{false};
+            std::atomic<std::int64_t> deadline_ms_{0};
             mutable std::mutex mutex_;
             std::condition_variable cv_;
             std::thread worker_;
+            TimePlan time_plan_{};
+            std::chrono::steady_clock::time_point managed_clock_start_{};
             bool infinite_{false};
             bool pondering_{false};
             bool ponder_released_{true};
@@ -565,7 +625,7 @@ namespace aurora::chess
         void run_search_command(SearchController& search, Engine& engine, std::ostream& output,
                                 std::mutex& output_mutex, const GoCommand& go, const UciOptions& options)
         {
-            search.start(engine, output, output_mutex, go, options.ponder());
+            search.start(engine, output, output_mutex, go, options.ponder(), options.move_overhead_ms());
         }
 
     } // namespace
