@@ -57,6 +57,7 @@ function(configure_aurora_optimized_target target_name)
         $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release,RelWithDebInfo>>:/GL>
         $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release,RelWithDebInfo>>:/arch:AVX2>
         $<$<AND:$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Release,RelWithDebInfo>>:-O3>
+        $<$<AND:$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Release,RelWithDebInfo>>:-mavx2>
     )
 
     if (AURORA_ENABLE_NATIVE_ARCH AND NOT MSVC)

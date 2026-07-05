@@ -11,6 +11,18 @@
 #include <string>
 #include <vector>
 
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
+
+#if defined(_MSC_VER)
+#define AURORA_FORCE_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#define AURORA_FORCE_INLINE inline __attribute__((always_inline))
+#else
+#define AURORA_FORCE_INLINE inline
+#endif
+
 namespace aurora::chess
 {
     namespace
@@ -137,6 +149,43 @@ namespace aurora::chess
             return destination;
         }
 
+#if defined(__AVX2__)
+        [[nodiscard]] AURORA_FORCE_INLINE std::int32_t horizontal_sum_i32(__m256i value) noexcept
+        {
+            const __m128i high = _mm256_extracti128_si256(value, 1);
+            const __m128i low = _mm256_castsi256_si128(value);
+            __m128i sum = _mm_add_epi32(low, high);
+            sum = _mm_hadd_epi32(sum, sum);
+            sum = _mm_hadd_epi32(sum, sum);
+            return _mm_cvtsi128_si32(sum);
+        }
+#endif
+
+        [[nodiscard]] AURORA_FORCE_INLINE std::int32_t dot_product_i16(const std::int16_t* lhs, const std::int16_t* rhs,
+                                                                       std::size_t count) noexcept
+        {
+            std::size_t index = 0;
+            std::int32_t sum = 0;
+
+#if defined(__AVX2__)
+            __m256i packed_sum = _mm256_setzero_si256();
+            for (; index + 16 <= count; index += 16)
+            {
+                const __m256i lhs_values = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(lhs + index));
+                const __m256i rhs_values = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(rhs + index));
+                packed_sum = _mm256_add_epi32(packed_sum, _mm256_madd_epi16(lhs_values, rhs_values));
+            }
+            sum = horizontal_sum_i32(packed_sum);
+#endif
+
+            for (; index < count; ++index)
+            {
+                sum += lhs[index] * rhs[index];
+            }
+
+            return sum;
+        }
+
         template <std::size_t In, std::size_t Out>
         void dense_clipped_relu(const std::array<std::int16_t, In>& input, const std::vector<std::int16_t>& weights,
                                 const std::array<std::int32_t, Out>& biases,
@@ -147,11 +196,7 @@ namespace aurora::chess
             for (std::size_t row = 0; row < Out; ++row)
             {
                 const std::int16_t* row_weights = weights_data + row * In;
-                std::int32_t value = biases[row];
-                for (std::size_t column = 0; column < In; ++column)
-                {
-                    value += input_data[column] * row_weights[column];
-                }
+                const std::int32_t value = biases[row] + dot_product_i16(input_data, row_weights, In);
                 output[row] = to_clipped_activation(value);
             }
         }
@@ -165,12 +210,7 @@ namespace aurora::chess
             for (std::size_t row = 0; row < Out; ++row)
             {
                 const std::int16_t* row_weights = weights_data + row * In;
-                std::int32_t value = biases[row];
-                for (std::size_t column = 0; column < In; ++column)
-                {
-                    value += input_data[column] * row_weights[column];
-                }
-                output[row] = value;
+                output[row] = biases[row] + dot_product_i16(input_data, row_weights, In);
             }
         }
 
@@ -437,3 +477,5 @@ namespace aurora::chess
     }
 
 } // namespace aurora::chess
+
+#undef AURORA_FORCE_INLINE
