@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <thread>
 #include <utility>
 
@@ -40,13 +41,48 @@ namespace aurora::chess
             std::size_t worker_id{0};
         };
 
+        struct SearchStack
+        {
+            Score static_eval{0};
+            Move tt_move{0};
+            bool static_eval_ready{false};
+            bool in_check{false};
+        };
+
         constexpr Score kInitialAspirationWindow = 25;
         constexpr Score kMinimumMateBound = kMateScore - 512;
         constexpr std::size_t kAccumulatorStackSize = 256;
+        constexpr std::size_t kSearchStackSize = 256;
 
         [[nodiscard]] constexpr bool is_mate_score(Score score) noexcept
         {
             return score <= -kMinimumMateBound || score >= kMinimumMateBound;
+        }
+
+        [[nodiscard]] constexpr Score score_to_tt(Score score, std::size_t ply) noexcept
+        {
+            if (score >= kMinimumMateBound)
+            {
+                return score + static_cast<Score>(ply);
+            }
+            if (score <= -kMinimumMateBound)
+            {
+                return score - static_cast<Score>(ply);
+            }
+            return score;
+        }
+
+        [[nodiscard]] constexpr Score score_from_tt(Score score, std::size_t ply) noexcept
+        {
+            if (score >= kMinimumMateBound)
+            {
+                return score - static_cast<Score>(ply);
+            }
+            if (score <= -kMinimumMateBound)
+            {
+                return score + static_cast<Score>(ply);
+            }
+            return score;
         }
 
         [[nodiscard]] bool has_non_pawn_material(const Board& board, Color color) noexcept
@@ -166,6 +202,7 @@ namespace aurora::chess
             SearchState state_;
             const NnueEvaluator* nnue_{nullptr};
             std::array<NnueEvaluator::Accumulator, kAccumulatorStackSize> accumulator_stack_{};
+            std::array<SearchStack, kSearchStackSize> search_stack_{};
             std::size_t accumulator_stack_size_{0};
         };
 
@@ -415,7 +452,7 @@ namespace aurora::chess
                 const Bound bound = score <= original_alpha ? Bound::Upper
                                     : score >= beta         ? Bound::Lower
                                                             : Bound::Exact;
-                state_.table.store(board.key(), depth, score, bound, best_move);
+                state_.table.store(board.key(), depth, score_to_tt(score, 0), bound, best_move);
             }
 
             return SearchIteration{
@@ -470,41 +507,52 @@ namespace aurora::chess
             state_.selective_depth = std::max(state_.selective_depth, ply);
             const Score original_alpha = alpha;
             const bool pv_node = beta - alpha > 1;
-            Move tt_move = 0;
-            const bool in_check = board.checkers() != 0;
-            Score static_eval = 0;
-            bool static_eval_ready = false;
-            auto evaluate_static = [&]() noexcept
+            auto& stack = search_stack_[std::min(ply, search_stack_.size() - 1)];
+            stack = {};
+            stack.in_check = board.checkers() != 0;
+            const bool in_check = stack.in_check;
+            std::optional<TranspositionEntry> tt_entry = state_.table.probe(board.key());
+            if (tt_entry)
             {
-                if (!static_eval_ready)
+                stack.tt_move = tt_entry->best_move;
+                if (tt_entry->has_static_eval)
                 {
-                    static_eval = evaluate(board);
-                    static_eval_ready = true;
+                    stack.static_eval = tt_entry->static_eval;
+                    stack.static_eval_ready = true;
                 }
-                return static_eval;
+            }
+            const Move tt_move = stack.tt_move;
+            auto evaluate_static = [&]() noexcept -> Score
+            {
+                if (!stack.static_eval_ready)
+                {
+                    stack.static_eval = evaluate(board);
+                    stack.static_eval_ready = true;
+                }
+                return stack.static_eval;
             };
 
-            if (const auto entry = state_.table.probe(board.key()))
+            if (tt_entry)
             {
-                tt_move = entry->best_move;
-                if (entry->depth >= depth)
+                const Score tt_score = score_from_tt(tt_entry->score, ply);
+                if (tt_entry->depth >= depth)
                 {
-                    if (!pv_node && entry->bound == Bound::Exact)
+                    if (!pv_node && tt_entry->bound == Bound::Exact)
                     {
-                        return entry->score;
+                        return tt_score;
                     }
-                    if (entry->bound == Bound::Lower)
+                    if (tt_entry->bound == Bound::Lower)
                     {
-                        alpha = std::max(alpha, entry->score);
+                        alpha = std::max(alpha, tt_score);
                     }
-                    else if (entry->bound == Bound::Upper)
+                    else if (tt_entry->bound == Bound::Upper)
                     {
-                        beta = std::min(beta, entry->score);
+                        beta = std::min(beta, tt_score);
                     }
 
                     if (alpha >= beta)
                     {
-                        return entry->score;
+                        return tt_score;
                     }
                 }
             }
@@ -571,7 +619,9 @@ namespace aurora::chess
 
                     if (score >= prob_cut_beta)
                     {
-                        state_.table.store(board.key(), depth, score, Bound::Lower, move);
+                        state_.table.store(board.key(), depth, score_to_tt(score, ply), Bound::Lower, move,
+                                           stack.static_eval_ready ? std::optional<Score>{stack.static_eval}
+                                                                   : std::nullopt);
                         return score - (prob_cut_beta - beta);
                     }
                 }
@@ -706,7 +756,8 @@ namespace aurora::chess
                                                              : Bound::Exact;
             if (!stopped())
             {
-                state_.table.store(board.key(), depth, best_score, bound, best_move);
+                state_.table.store(board.key(), depth, score_to_tt(best_score, ply), bound, best_move,
+                                   stack.static_eval_ready ? std::optional<Score>{stack.static_eval} : std::nullopt);
             }
             return best_score;
         }
@@ -723,10 +774,23 @@ namespace aurora::chess
             state_.selective_depth = std::max(state_.selective_depth, ply);
             pv.clear();
 
-            const bool in_check = board.checkers() != 0;
+            auto& stack = search_stack_[std::min(ply, search_stack_.size() - 1)];
+            stack = {};
+            stack.in_check = board.checkers() != 0;
+            const bool in_check = stack.in_check;
+            auto evaluate_static = [&]() noexcept -> Score
+            {
+                if (!stack.static_eval_ready)
+                {
+                    stack.static_eval = evaluate(board);
+                    stack.static_eval_ready = true;
+                }
+                return stack.static_eval;
+            };
+
             if (!in_check || ply >= state_.max_quiescence_ply)
             {
-                const Score stand_pat = evaluate(board);
+                const Score stand_pat = evaluate_static();
                 if (stand_pat >= beta)
                 {
                     return beta;

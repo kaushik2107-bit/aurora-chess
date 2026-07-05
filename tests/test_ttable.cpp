@@ -24,6 +24,20 @@ namespace
         EXPECT_EQ(entry->score, 42);
         EXPECT_EQ(entry->bound, aurora::chess::Bound::Exact);
         EXPECT_EQ(entry->best_move, move);
+        EXPECT_FALSE(entry->has_static_eval);
+    }
+
+    TEST(TranspositionTableTests, StoresStaticEvalWhenProvided)
+    {
+        aurora::chess::TranspositionTable table{16};
+        constexpr aurora::chess::Key key = 0x4321;
+
+        table.store(key, 3, 24, aurora::chess::Bound::Lower, 0, -12);
+
+        const auto entry = table.probe(key);
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_TRUE(entry->has_static_eval);
+        EXPECT_EQ(entry->static_eval, -12);
     }
 
     TEST(TranspositionTableTests, MissesDifferentKeys)

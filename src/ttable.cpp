@@ -40,7 +40,8 @@ namespace aurora::chess
         return std::nullopt;
     }
 
-    void TranspositionTable::store(Key key, std::size_t depth, Score score, Bound bound, Move best_move)
+    void TranspositionTable::store(Key key, std::size_t depth, Score score, Bound bound, Move best_move,
+                                   std::optional<Score> static_eval)
     {
         const std::unique_lock lock{mutex_};
         auto& entry = entries_[static_cast<std::size_t>(key % entries_.size())];
@@ -50,9 +51,13 @@ namespace aurora::chess
         }
 
         entry = TranspositionEntry{
-            key,   best_move,
-            score, static_cast<std::uint16_t>(std::min<std::size_t>(depth, std::numeric_limits<std::uint16_t>::max())),
+            key,
+            best_move,
+            score,
+            static_eval.value_or(0),
+            static_cast<std::uint16_t>(std::min<std::size_t>(depth, std::numeric_limits<std::uint16_t>::max())),
             bound,
+            static_eval.has_value(),
         };
     }
 
