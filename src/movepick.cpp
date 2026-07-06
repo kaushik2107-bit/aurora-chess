@@ -1,5 +1,6 @@
 #include "movepick.hpp"
 
+#include "attacks.hpp"
 #include "helpers.hpp"
 #include "see.hpp"
 
@@ -53,6 +54,90 @@ namespace aurora::chess
             default:
                 return 0;
             }
+        }
+
+        [[nodiscard]] PieceType promotion_piece_type(MoveFlag flag) noexcept
+        {
+            switch (flag)
+            {
+            case MoveFlag::QueenPromotion:
+            case MoveFlag::QueenPromotionCapture:
+                return PieceType::Queen;
+            case MoveFlag::RookPromotion:
+            case MoveFlag::RookPromotionCapture:
+                return PieceType::Rook;
+            case MoveFlag::BishopPromotion:
+            case MoveFlag::BishopPromotionCapture:
+                return PieceType::Bishop;
+            case MoveFlag::KnightPromotion:
+            case MoveFlag::KnightPromotionCapture:
+                return PieceType::Knight;
+            default:
+                return PieceType::Count;
+            }
+        }
+
+        [[nodiscard]] bool attacks_with_piece(PieceType type, Square from, Square target, Bitboard occupancy) noexcept
+        {
+            const Bitboard target_bb = bit(target);
+            switch (type)
+            {
+            case PieceType::Pawn:
+                return false;
+            case PieceType::Knight:
+                return (knight_attacks(from) & target_bb) != 0;
+            case PieceType::Bishop:
+                return (bishop_attacks(from, occupancy) & target_bb) != 0;
+            case PieceType::Rook:
+                return (rook_attacks(from, occupancy) & target_bb) != 0;
+            case PieceType::Queen:
+                return (queen_attacks(from, occupancy) & target_bb) != 0;
+            case PieceType::King:
+                return (king_attacks(from) & target_bb) != 0;
+            default:
+                return false;
+            }
+        }
+
+        [[nodiscard]] bool gives_check(const Board& board, Move move) noexcept
+        {
+            const Piece moving = board.piece_on(move_from(move));
+            if (moving == Piece::None)
+            {
+                return false;
+            }
+
+            const Color us = board.side_to_move();
+            const Square them_king = board.king_square(~us);
+            if (them_king == Square::NoSquare)
+            {
+                return false;
+            }
+
+            const Square from = move_from(move);
+            const Square to = move_to(move);
+            const MoveFlag flag = move_flag(move);
+            Bitboard occupancy_after = (board.all_occupancy() & ~bit(from)) | bit(to);
+            if (flag == MoveFlag::EnPassant)
+            {
+                const auto captured_square = static_cast<Square>(static_cast<int>(to) + (us == Color::White ? -8 : 8));
+                occupancy_after &= ~bit(captured_square);
+            }
+
+            const PieceType direct_type = is_promotion(flag) ? promotion_piece_type(flag) : piece_type(moving);
+            if (direct_type == PieceType::Pawn)
+            {
+                if ((pawn_attacks(to, us) & bit(them_king)) != 0)
+                {
+                    return true;
+                }
+            }
+            else if (attacks_with_piece(direct_type, to, them_king, occupancy_after))
+            {
+                return true;
+            }
+
+            return attackers_to(board, them_king, occupancy_after, us) != 0;
         }
 
         [[nodiscard]] bool same_move(Move lhs, Move rhs) noexcept
@@ -179,6 +264,10 @@ namespace aurora::chess
             {
                 Score score = ordering_.history == nullptr ? 0 : (*ordering_.history)[static_cast<std::size_t>(move)];
                 score += continuation_score(board_, move, ordering_);
+                if (gives_check(board_, move) && see_ge(board_, move, -75))
+                {
+                    score += 12'000;
+                }
                 quiets_.push(move, move_score(score));
             }
         }

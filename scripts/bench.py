@@ -74,7 +74,7 @@ def parse_epd_line(index: int, line: str) -> Position:
     raw_best_moves: list[str] = []
     best_moves: set[str] = set()
     if bm_match:
-        raw_best_moves = bm_match.group(1).split()
+        raw_best_moves = [move for move in bm_match.group(1).split() if move != "bm"]
         best_moves = {normalize_epd_move(move, side_to_move) for move in raw_best_moves}
 
     return Position(index=index, fen=fen, best_moves=best_moves, raw_best_moves=raw_best_moves, line=line)
