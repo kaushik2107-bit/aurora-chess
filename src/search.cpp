@@ -58,6 +58,8 @@ namespace aurora::chess
         constexpr Score kInitialAspirationWindow = 25;
         constexpr Score kMinimumMateBound = kMateScore - 512;
         constexpr int kMaxHistoryScore = 1'000'000;
+        constexpr std::size_t kRootPvsDepth = 7;
+        constexpr std::size_t kShallowRootVerificationMoves = 16;
         constexpr std::size_t kAccumulatorStackSize = 256;
         constexpr std::size_t kSearchStackSize = 256;
         constexpr std::array<Score, static_cast<std::size_t>(PieceType::Count)> kPieceValues{
@@ -549,8 +551,10 @@ namespace aurora::chess
                 std::vector<Move> child_pv;
                 search_stack_[1].previous_move = move;
                 search_stack_[1].previous_piece_square = current_piece_square;
+                const bool use_root_pvs =
+                    searched != 0 && (depth >= kRootPvsDepth || searched <= kShallowRootVerificationMoves);
                 Score score = 0;
-                if (searched == 0)
+                if (!use_root_pvs)
                 {
                     score = -alpha_beta(board, depth - 1, -beta, -alpha, 1, child_pv);
                 }
@@ -651,6 +655,7 @@ namespace aurora::chess
             const Score original_alpha = alpha;
             const bool pv_node = beta - alpha > 1;
             const bool pruning_node = !conservative;
+            const bool child_conservative = conservative && ply < 3;
             auto& stack = search_stack_[std::min(ply, search_stack_.size() - 1)];
             const Move previous_move = stack.previous_move;
             const std::size_t previous_piece_square = stack.previous_piece_square;
@@ -741,7 +746,7 @@ namespace aurora::chess
                         search_stack_[ply + 1].previous_piece_square = kNoPieceSquareHistory;
                     }
                     const Score score =
-                        -alpha_beta(board, null_depth, -beta, -beta + 1, ply + 1, null_pv, false, conservative);
+                        -alpha_beta(board, null_depth, -beta, -beta + 1, ply + 1, null_pv, false, child_conservative);
                     board.undo_move();
                     if (score >= beta)
                     {
@@ -904,7 +909,7 @@ namespace aurora::chess
                         : 0;
                 if (move_number == 1)
                 {
-                    score = -alpha_beta(board, child_depth, -beta, -alpha, ply + 1, child_pv, true, conservative);
+                    score = -alpha_beta(board, child_depth, -beta, -alpha, ply + 1, child_pv, true, child_conservative);
                 }
                 else
                 {
@@ -914,15 +919,17 @@ namespace aurora::chess
                         search_depth = child_depth - reduction;
                     }
 
-                    score = -alpha_beta(board, search_depth, -alpha - 1, -alpha, ply + 1, child_pv, true, conservative);
+                    score = -alpha_beta(board, search_depth, -alpha - 1, -alpha, ply + 1, child_pv, true,
+                                        child_conservative);
                     if (reduction != 0 && score > alpha)
                     {
-                        score =
-                            -alpha_beta(board, child_depth, -alpha - 1, -alpha, ply + 1, child_pv, true, conservative);
+                        score = -alpha_beta(board, child_depth, -alpha - 1, -alpha, ply + 1, child_pv, true,
+                                            child_conservative);
                     }
                     if (score > alpha && score < beta)
                     {
-                        score = -alpha_beta(board, child_depth, -beta, -alpha, ply + 1, child_pv, true, conservative);
+                        score =
+                            -alpha_beta(board, child_depth, -beta, -alpha, ply + 1, child_pv, true, child_conservative);
                     }
                 }
 
