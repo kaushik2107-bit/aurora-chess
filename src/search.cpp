@@ -107,8 +107,7 @@ namespace aurora::chess
             return (3 + depth * depth) / 2;
         }
 
-        [[nodiscard]] constexpr Score reverse_futility_margin(std::size_t depth, Move tt_move,
-                                                              bool improving) noexcept
+        [[nodiscard]] constexpr Score reverse_futility_margin(std::size_t depth, Move tt_move, bool improving) noexcept
         {
             const Score tt_bonus = tt_move != 0 ? 20 : 0;
             const Score improving_bonus = improving ? static_cast<Score>(45 * depth) : 0;
@@ -153,12 +152,11 @@ namespace aurora::chess
                 return 0;
             }
 
-            return state.continuation_history[previous_piece_square * kPieceSquareHistoryBuckets +
-                                              current_piece_square];
+            return state
+                .continuation_history[previous_piece_square * kPieceSquareHistoryBuckets + current_piece_square];
         }
 
-        [[nodiscard]] int quiet_history_score(const SearchState& state, Move move,
-                                              std::size_t previous_piece_square,
+        [[nodiscard]] int quiet_history_score(const SearchState& state, Move move, std::size_t previous_piece_square,
                                               std::size_t current_piece_square) noexcept
         {
             return state.history[static_cast<std::size_t>(move)] +
@@ -292,7 +290,7 @@ namespace aurora::chess
             [[nodiscard]] SearchIteration search_root(Board& board, std::size_t depth, Move previous_best, Score alpha,
                                                       Score beta);
             [[nodiscard]] Score alpha_beta(Board& board, std::size_t depth, Score alpha, Score beta, std::size_t ply,
-                                           std::vector<Move>& pv, bool allow_null = true);
+                                           std::vector<Move>& pv, bool allow_null = true, bool conservative = false);
             [[nodiscard]] Score quiescence(Board& board, Score alpha, Score beta, std::size_t ply,
                                            std::vector<Move>& pv);
             [[nodiscard]] bool stopped() const noexcept;
@@ -551,7 +549,19 @@ namespace aurora::chess
                 std::vector<Move> child_pv;
                 search_stack_[1].previous_move = move;
                 search_stack_[1].previous_piece_square = current_piece_square;
-                const Score score = -alpha_beta(board, depth - 1, -beta, -alpha, 1, child_pv);
+                Score score = 0;
+                if (searched == 0)
+                {
+                    score = -alpha_beta(board, depth - 1, -beta, -alpha, 1, child_pv);
+                }
+                else
+                {
+                    score = -alpha_beta(board, depth - 1, -alpha - 1, -alpha, 1, child_pv, false, true);
+                    if (score > alpha)
+                    {
+                        score = -alpha_beta(board, depth - 1, -beta, -alpha, 1, child_pv);
+                    }
+                }
                 undo_search_move(board);
 
                 if (stopped())
@@ -610,7 +620,7 @@ namespace aurora::chess
         }
 
         Score SearchWorker::alpha_beta(Board& board, std::size_t depth, Score alpha, Score beta, std::size_t ply,
-                                       std::vector<Move>& pv, bool allow_null)
+                                       std::vector<Move>& pv, bool allow_null, bool conservative)
         {
             if (stopped())
             {
@@ -640,6 +650,7 @@ namespace aurora::chess
             state_.selective_depth = std::max(state_.selective_depth, ply);
             const Score original_alpha = alpha;
             const bool pv_node = beta - alpha > 1;
+            const bool pruning_node = !conservative;
             auto& stack = search_stack_[std::min(ply, search_stack_.size() - 1)];
             const Move previous_move = stack.previous_move;
             const std::size_t previous_piece_square = stack.previous_piece_square;
@@ -676,11 +687,11 @@ namespace aurora::chess
                 }
 
                 const auto& previous_same_side = search_stack_[std::min(ply - 2, search_stack_.size() - 1)];
-                return stack.static_eval_ready && previous_same_side.static_eval_ready && !previous_same_side.in_check &&
-                       stack.static_eval > previous_same_side.static_eval;
+                return stack.static_eval_ready && previous_same_side.static_eval_ready &&
+                       !previous_same_side.in_check && stack.static_eval > previous_same_side.static_eval;
             };
 
-            if (tt_entry)
+            if (!pv_node && tt_entry)
             {
                 const Score tt_score = score_from_tt(tt_entry->score, ply);
                 if (tt_entry->depth >= depth)
@@ -705,7 +716,7 @@ namespace aurora::chess
                 }
             }
 
-            if (!pv_node && !in_check && depth <= 8 && !is_mate_score(beta))
+            if (pruning_node && !pv_node && !in_check && depth <= 8 && !is_mate_score(beta))
             {
                 const Score eval = evaluate_static();
                 const Score margin = reverse_futility_margin(depth, tt_move, is_improving());
@@ -715,7 +726,7 @@ namespace aurora::chess
                 }
             }
 
-            if (allow_null && !pv_node && !in_check && depth >= 3 && !is_mate_score(beta) &&
+            if (pruning_node && allow_null && !pv_node && !in_check && depth >= 3 && !is_mate_score(beta) &&
                 has_non_pawn_material(board, board.side_to_move()) && evaluate_static() >= beta)
             {
                 const Score eval_margin = std::max<Score>(0, evaluate_static() - beta);
@@ -729,7 +740,8 @@ namespace aurora::chess
                         search_stack_[ply + 1].previous_move = 0;
                         search_stack_[ply + 1].previous_piece_square = kNoPieceSquareHistory;
                     }
-                    const Score score = -alpha_beta(board, null_depth, -beta, -beta + 1, ply + 1, null_pv, false);
+                    const Score score =
+                        -alpha_beta(board, null_depth, -beta, -beta + 1, ply + 1, null_pv, false, conservative);
                     board.undo_move();
                     if (score >= beta)
                     {
@@ -738,12 +750,12 @@ namespace aurora::chess
                 }
             }
 
-            if (!pv_node && depth >= 5 && tt_move == 0)
+            if (pruning_node && !pv_node && depth >= 5 && tt_move == 0)
             {
                 --depth;
             }
 
-            if (!pv_node && !in_check && depth >= 4 && !is_mate_score(beta))
+            if (pruning_node && !pv_node && !in_check && depth >= 4 && !is_mate_score(beta))
             {
                 const Score prob_cut_beta = beta + (is_improving() ? 145 : 190);
                 MovePicker prob_picker{board,
@@ -817,10 +829,10 @@ namespace aurora::chess
                     child_depth > estimated_reduction ? child_depth - estimated_reduction : 0;
                 const Score capture_value = noisy ? captured_piece_value(board, move) : 0;
 
-                const bool noisy_see_bad = !pv_node && !in_check && best_move != 0 && noisy && depth <= 8 &&
-                                           !see_ge(board, move, -static_cast<Score>(150 * depth));
+                const bool noisy_see_bad = pruning_node && !pv_node && !in_check && best_move != 0 && noisy &&
+                                           depth <= 8 && !see_ge(board, move, -static_cast<Score>(150 * depth));
                 const bool quiet_see_bad =
-                    !pv_node && !in_check && best_move != 0 && quiet_late_move && depth <= 8 &&
+                    pruning_node && !pv_node && !in_check && best_move != 0 && quiet_late_move && depth <= 8 &&
                     !see_ge(board, move, -static_cast<Score>(30 * estimated_lmr_depth * estimated_lmr_depth));
 
                 if (!make_search_move(board, move))
@@ -837,7 +849,7 @@ namespace aurora::chess
                     continue;
                 }
 
-                if (!pv_node && !in_check && !gives_check && best_move != 0 && noisy && depth <= 7 &&
+                if (pruning_node && !pv_node && !in_check && !gives_check && best_move != 0 && noisy && depth <= 7 &&
                     !is_promotion(move_flag(move)) && !is_mate_score(alpha))
                 {
                     const Score futility_score =
@@ -850,7 +862,8 @@ namespace aurora::chess
                     }
                 }
 
-                if (!pv_node && !in_check && !gives_check && best_move != 0 && quiet_late_move && depth <= 8)
+                if (pruning_node && !pv_node && !in_check && !gives_check && best_move != 0 && quiet_late_move &&
+                    depth <= 8)
                 {
                     if (move_number >= futility_move_count(depth))
                     {
@@ -886,12 +899,12 @@ namespace aurora::chess
                     search_stack_[ply + 1].previous_piece_square = current_piece_square;
                 }
                 const std::size_t reduction =
-                    !in_check && !gives_check
+                    pruning_node && !in_check && !gives_check
                         ? late_move_reduction(child_depth, move_number, pv_node, noisy, gives_check, history_score)
                         : 0;
                 if (move_number == 1)
                 {
-                    score = -alpha_beta(board, child_depth, -beta, -alpha, ply + 1, child_pv);
+                    score = -alpha_beta(board, child_depth, -beta, -alpha, ply + 1, child_pv, true, conservative);
                 }
                 else
                 {
@@ -901,14 +914,15 @@ namespace aurora::chess
                         search_depth = child_depth - reduction;
                     }
 
-                    score = -alpha_beta(board, search_depth, -alpha - 1, -alpha, ply + 1, child_pv);
+                    score = -alpha_beta(board, search_depth, -alpha - 1, -alpha, ply + 1, child_pv, true, conservative);
                     if (reduction != 0 && score > alpha)
                     {
-                        score = -alpha_beta(board, child_depth, -alpha - 1, -alpha, ply + 1, child_pv);
+                        score =
+                            -alpha_beta(board, child_depth, -alpha - 1, -alpha, ply + 1, child_pv, true, conservative);
                     }
                     if (score > alpha && score < beta)
                     {
-                        score = -alpha_beta(board, child_depth, -beta, -alpha, ply + 1, child_pv);
+                        score = -alpha_beta(board, child_depth, -beta, -alpha, ply + 1, child_pv, true, conservative);
                     }
                 }
 
@@ -1014,7 +1028,7 @@ namespace aurora::chess
                 return stack.static_eval;
             };
 
-            if (tt_entry)
+            if (!pv_node && tt_entry)
             {
                 const Score tt_score = score_from_tt(tt_entry->score, ply);
                 if (!pv_node && tt_entry->bound == Bound::Exact)
