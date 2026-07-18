@@ -312,6 +312,7 @@ namespace aurora::chess
     {
     public:
         static constexpr std::size_t kMaxDirtyPieces = 4;
+        static constexpr std::size_t kMaxHistoryPlies = 512;
 
         struct DirtyPiece
         {
@@ -392,7 +393,7 @@ namespace aurora::chess
         std::uint32_t halfmove_clock_{0};
         std::uint32_t fullmove_number_{1};
         Key key_{0};
-        std::array<UndoState, 256> history_{};
+        std::array<UndoState, kMaxHistoryPlies> history_{};
         std::size_t history_size_{0};
         std::size_t null_move_depth_{0};
     };

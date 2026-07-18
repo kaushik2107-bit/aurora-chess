@@ -678,6 +678,11 @@ namespace aurora::chess
 
     bool Board::make_move(Move move)
     {
+        if (history_size_ == history_.size())
+        {
+            return false;
+        }
+
         const auto from = move_from(move);
         const auto to = move_to(move);
         const auto flag = move_flag(move);
@@ -847,7 +852,7 @@ namespace aurora::chess
 
     bool Board::make_null_move()
     {
-        if (checkers_ != 0)
+        if (checkers_ != 0 || history_size_ == history_.size())
         {
             return false;
         }

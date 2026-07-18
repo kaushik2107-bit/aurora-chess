@@ -71,6 +71,32 @@ namespace aurora::chess::test
         EXPECT_EQ(board.key(), key);
     }
 
+    TEST(BoardTests, SupportsGamesBeyondThePreviousHistoryLimit)
+    {
+        Board board{"6nk/8/8/8/8/8/8/KN6 w - - 0 1"};
+        const std::string initial_fen = board.fen();
+        const Key initial_key = board.key();
+
+        constexpr std::array moves{
+            make_move(Square::B1, Square::C3),
+            make_move(Square::G8, Square::F6),
+            make_move(Square::C3, Square::B1),
+            make_move(Square::F6, Square::G8),
+        };
+        constexpr std::size_t move_count = 300;
+        for (std::size_t ply = 0; ply < move_count; ++ply)
+        {
+            ASSERT_TRUE(board.make_move(moves[ply % moves.size()])) << "ply " << ply;
+        }
+
+        for (std::size_t ply = 0; ply < move_count; ++ply)
+        {
+            ASSERT_TRUE(board.undo_move()) << "undo " << ply;
+        }
+        EXPECT_EQ(board.fen(), initial_fen);
+        EXPECT_EQ(board.key(), initial_key);
+    }
+
     TEST(BoardTests, DetectsFiftyMoveRuleDraw)
     {
         const Board board{"4k2r/8/8/8/8/8/8/R3K3 w - - 100 1"};

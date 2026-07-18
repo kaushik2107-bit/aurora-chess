@@ -116,6 +116,11 @@ namespace aurora::chess
             return static_cast<Score>(90 * depth) - improving_bonus - tt_bonus;
         }
 
+        [[nodiscard]] constexpr Score razor_margin(std::size_t depth) noexcept
+        {
+            return static_cast<Score>(250 + 100 * depth * depth);
+        }
+
         [[nodiscard]] constexpr std::size_t null_move_reduction(std::size_t depth, Score eval_margin) noexcept
         {
             const auto margin_bonus =
@@ -718,6 +723,21 @@ namespace aurora::chess
                     {
                         return tt_score;
                     }
+                }
+            }
+
+            // At shallow, clearly failing nodes, quiescence can establish an upper bound much more cheaply than
+            // searching every quiet move. The quadratic margin keeps the pruning deliberately conservative as the
+            // remaining depth grows.
+            if (pruning_node && !pv_node && !in_check && depth <= 3 && !is_mate_score(alpha) &&
+                evaluate_static() + razor_margin(depth) <= alpha)
+            {
+                std::vector<Move> razor_pv;
+                const Score razor_score = quiescence(board, alpha - 1, alpha, ply, razor_pv);
+                if (razor_score <= alpha)
+                {
+                    pv.clear();
+                    return razor_score;
                 }
             }
 
