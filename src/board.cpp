@@ -184,6 +184,45 @@ namespace aurora::chess
         set_fen(fen);
     }
 
+    Board::Board(const Board& other)
+    {
+        *this = other;
+    }
+
+    Board& Board::operator=(const Board& other)
+    {
+        if (this == &other)
+        {
+            return *this;
+        }
+
+        board_ = other.board_;
+        pieces_ = other.pieces_;
+        occupancy_ = other.occupancy_;
+        all_occupancy_ = other.all_occupancy_;
+        king_square_ = other.king_square_;
+        checkers_ = other.checkers_;
+        pinned_ = other.pinned_;
+        pinners_ = other.pinners_;
+        side_to_move_ = other.side_to_move_;
+        castling_rights_ = other.castling_rights_;
+        en_passant_square_ = other.en_passant_square_;
+        halfmove_clock_ = other.halfmove_clock_;
+        fullmove_number_ = other.fullmove_number_;
+        key_ = other.key_;
+        history_ = other.history_;
+        null_move_depth_ = other.null_move_depth_;
+
+        UndoState* previous = nullptr;
+        for (auto& state : history_)
+        {
+            state.previous = previous;
+            previous = &state;
+        }
+        current_state_ = previous;
+        return *this;
+    }
+
     void Board::clear()
     {
         board_.fill(Piece::None);
@@ -200,7 +239,8 @@ namespace aurora::chess
         halfmove_clock_ = 0;
         fullmove_number_ = 1;
         key_ = 0;
-        history_size_ = 0;
+        history_.clear();
+        current_state_ = nullptr;
         null_move_depth_ = 0;
     }
 
@@ -459,26 +499,26 @@ namespace aurora::chess
     const Board::DirtyPiece& Board::last_dirty_piece() const noexcept
     {
         static constexpr DirtyPiece kEmptyDirtyPiece{};
-        return history_size_ == 0 ? kEmptyDirtyPiece : history_[history_size_ - 1].dirty_piece;
+        return current_state_ == nullptr ? kEmptyDirtyPiece : current_state_->dirty_piece;
     }
 
     std::uint32_t Board::repetition_count() const noexcept
     {
         std::uint32_t count = 1;
-        if (null_move_depth_ != 0 || history_size_ < 4 || halfmove_clock_ < 4)
+        if (null_move_depth_ != 0 || current_state_ == nullptr || halfmove_clock_ < 4)
         {
             return count;
         }
 
-        const std::size_t reversible_plies = std::min<std::size_t>(history_size_, halfmove_clock_);
-        for (std::size_t offset = 1; offset < reversible_plies; offset += 2)
+        const UndoState* state = current_state_;
+        for (std::size_t offset = 1; state != nullptr && offset < halfmove_clock_; ++offset)
         {
-            const UndoState& state = history_[history_size_ - 1 - offset];
-            if (state.null_move)
+            state = state->previous;
+            if (state == nullptr || state->null_move)
             {
                 break;
             }
-            if (state.key == key_)
+            if ((offset & 1U) != 0 && state->key == key_)
             {
                 ++count;
             }
@@ -678,11 +718,18 @@ namespace aurora::chess
 
     bool Board::make_move(Move move)
     {
-        if (history_size_ == history_.size())
+        history_.emplace_back();
+        if (!make_move(move, history_.back()))
         {
+            history_.pop_back();
             return false;
         }
+        history_.back().owned = true;
+        return true;
+    }
 
+    bool Board::make_move(Move move, UndoState& state)
+    {
         const auto from = move_from(move);
         const auto to = move_to(move);
         const auto flag = move_flag(move);
@@ -733,7 +780,8 @@ namespace aurora::chess
             add_added(dirty, us == Color::White ? Piece::WhiteRook : Piece::BlackRook, rook_to);
         }
 
-        history_[history_size_++] = UndoState{false,
+        state = UndoState{false,
+                                              false,
                                               move,
                                               moving,
                                               captured,
@@ -744,7 +792,9 @@ namespace aurora::chess
                                               fullmove_number_,
                                               side_to_move_,
                                               key_,
-                                              dirty};
+                                              dirty,
+                                              current_state_};
+        current_state_ = &state;
 
         if (moving_type == PieceType::King)
         {
@@ -852,13 +902,26 @@ namespace aurora::chess
 
     bool Board::make_null_move()
     {
-        if (checkers_ != 0 || history_size_ == history_.size())
+        history_.emplace_back();
+        if (!make_null_move(history_.back()))
+        {
+            history_.pop_back();
+            return false;
+        }
+        history_.back().owned = true;
+        return true;
+    }
+
+    bool Board::make_null_move(UndoState& state)
+    {
+        if (checkers_ != 0)
         {
             return false;
         }
 
         const Color us = side_to_move_;
-        history_[history_size_++] = UndoState{true,
+        state = UndoState{true,
+                                              false,
                                               0,
                                               Piece::None,
                                               Piece::None,
@@ -868,7 +931,10 @@ namespace aurora::chess
                                               halfmove_clock_,
                                               fullmove_number_,
                                               side_to_move_,
-                                              key_};
+                                              key_,
+                                              {},
+                                              current_state_};
+        current_state_ = &state;
 
         en_passant_square_ = Square::NoSquare;
         ++null_move_depth_;
@@ -884,12 +950,17 @@ namespace aurora::chess
 
     bool Board::undo_move()
     {
-        if (history_size_ == 0)
+        if (current_state_ == nullptr)
         {
             return false;
         }
 
-        const UndoState state = history_[--history_size_];
+        const UndoState state = *current_state_;
+        current_state_ = state.previous;
+        if (state.owned)
+        {
+            history_.pop_back();
+        }
         if (state.null_move)
         {
             castling_rights_ = state.castling_rights;

@@ -287,7 +287,7 @@ namespace aurora::chess
 
         private:
             [[nodiscard]] Score evaluate(const Board& board) const noexcept;
-            bool make_search_move(Board& board, Move move);
+            bool make_search_move(Board& board, Move move, Board::UndoState& undo_state);
             void undo_search_move(Board& board);
             void reset_accumulator(const Board& board);
             void push_accumulator(const Board& board);
@@ -381,9 +381,9 @@ namespace aurora::chess
             }
         }
 
-        bool SearchWorker::make_search_move(Board& board, Move move)
+        bool SearchWorker::make_search_move(Board& board, Move move, Board::UndoState& undo_state)
         {
-            if (!board.make_move(move))
+            if (!board.make_move(move, undo_state))
             {
                 return false;
             }
@@ -546,9 +546,10 @@ namespace aurora::chess
                 }
 
                 const Move move = root_moves[(first_move + searched) % root_moves.size()];
+                Board::UndoState undo_state;
                 const std::size_t current_piece_square =
                     piece_square_history_index(board.piece_on(move_from(move)), move_to(move));
-                if (!make_search_move(board, move))
+                if (!make_search_move(board, move, undo_state))
                 {
                     continue;
                 }
@@ -757,7 +758,8 @@ namespace aurora::chess
                 const Score eval_margin = std::max<Score>(0, evaluate_static() - beta);
                 const std::size_t reduction = null_move_reduction(depth, eval_margin);
                 const std::size_t null_depth = depth > reduction ? depth - reduction : 0;
-                if (board.make_null_move())
+                Board::UndoState null_state;
+                if (board.make_null_move(null_state))
                 {
                     std::vector<Move> null_pv;
                     if (ply + 1 < search_stack_.size())
@@ -799,7 +801,8 @@ namespace aurora::chess
 
                         const std::size_t current_piece_square =
                             piece_square_history_index(board.piece_on(move_from(move)), move_to(move));
-                        if (!make_search_move(board, move))
+                        Board::UndoState undo_state;
+                        if (!make_search_move(board, move, undo_state))
                         {
                             continue;
                         }
@@ -866,7 +869,8 @@ namespace aurora::chess
                     pruning_node && !pv_node && !in_check && best_move != 0 && quiet_late_move && depth <= 8 &&
                     !see_ge(board, move, -static_cast<Score>(30 * estimated_lmr_depth * estimated_lmr_depth));
 
-                if (!make_search_move(board, move))
+                Board::UndoState undo_state;
+                if (!make_search_move(board, move, undo_state))
                 {
                     continue;
                 }
@@ -1132,7 +1136,8 @@ namespace aurora::chess
                 }
                 const std::size_t current_piece_square =
                     piece_square_history_index(board.piece_on(move_from(move)), move_to(move));
-                if (!make_search_move(board, move))
+                Board::UndoState undo_state;
+                if (!make_search_move(board, move, undo_state))
                 {
                     continue;
                 }

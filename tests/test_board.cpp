@@ -83,7 +83,7 @@ namespace aurora::chess::test
             make_move(Square::C3, Square::B1),
             make_move(Square::F6, Square::G8),
         };
-        constexpr std::size_t move_count = 300;
+        constexpr std::size_t move_count = 600;
         for (std::size_t ply = 0; ply < move_count; ++ply)
         {
             ASSERT_TRUE(board.make_move(moves[ply % moves.size()])) << "ply " << ply;

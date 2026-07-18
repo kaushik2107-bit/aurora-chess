@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <deque>
 
 namespace aurora::chess
 {
@@ -312,7 +313,6 @@ namespace aurora::chess
     {
     public:
         static constexpr std::size_t kMaxDirtyPieces = 4;
-        static constexpr std::size_t kMaxHistoryPlies = 512;
 
         struct DirtyPiece
         {
@@ -324,7 +324,27 @@ namespace aurora::chess
             std::uint8_t added_count{0};
         };
 
+        struct UndoState
+        {
+            bool null_move{false};
+            bool owned{false};
+            Move move{0};
+            Piece moved{Piece::None};
+            Piece captured{Piece::None};
+            Square captured_square{Square::NoSquare};
+            CastlingRights castling_rights{CastlingRights::None};
+            Square en_passant_square{Square::NoSquare};
+            std::uint32_t halfmove_clock{0};
+            std::uint32_t fullmove_number{1};
+            Color side_to_move{Color::White};
+            Key key{0};
+            DirtyPiece dirty_piece{};
+            UndoState* previous{nullptr};
+        };
+
         Board(std::string_view fen = kStartFen);
+        Board(const Board& other);
+        Board& operator=(const Board& other);
 
         void set_fen(std::string_view fen);
         [[nodiscard]] std::string fen() const;
@@ -354,26 +374,12 @@ namespace aurora::chess
 
         [[nodiscard]] bool legal(Move move) const;
         bool make_move(Move move);
+        bool make_move(Move move, UndoState& state);
         bool make_null_move();
+        bool make_null_move(UndoState& state);
         bool undo_move();
 
     private:
-        struct UndoState
-        {
-            bool null_move{false};
-            Move move{0};
-            Piece moved{Piece::None};
-            Piece captured{Piece::None};
-            Square captured_square{Square::NoSquare};
-            CastlingRights castling_rights{CastlingRights::None};
-            Square en_passant_square{Square::NoSquare};
-            std::uint32_t halfmove_clock{0};
-            std::uint32_t fullmove_number{1};
-            Color side_to_move{Color::White};
-            Key key{0};
-            DirtyPiece dirty_piece{};
-        };
-
         void clear();
         void set_piece(Piece piece, Square square);
         void update_state() noexcept;
@@ -393,8 +399,8 @@ namespace aurora::chess
         std::uint32_t halfmove_clock_{0};
         std::uint32_t fullmove_number_{1};
         Key key_{0};
-        std::array<UndoState, kMaxHistoryPlies> history_{};
-        std::size_t history_size_{0};
+        std::deque<UndoState> history_{};
+        UndoState* current_state_{nullptr};
         std::size_t null_move_depth_{0};
     };
 
