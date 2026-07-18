@@ -31,6 +31,8 @@ namespace aurora::chess
 
         struct SearchState
         {
+            static constexpr std::size_t kCorrectionHistorySize = 1u << 14;
+
             const Evaluator& evaluator;
             TranspositionTable& table;
             std::uint64_t nodes{0};
@@ -41,12 +43,14 @@ namespace aurora::chess
             std::vector<Move> counter_moves{std::vector<Move>(1u << 16)};
             std::vector<int> continuation_history{
                 std::vector<int>(kPieceSquareHistoryBuckets * kPieceSquareHistoryBuckets)};
+            std::array<std::array<int, kCorrectionHistorySize>, 2> pawn_correction_history{};
             bool enable_check_extension{true};
             std::size_t worker_id{0};
         };
 
         struct SearchStack
         {
+            Score unadjusted_static_eval{0};
             Score static_eval{0};
             Move tt_move{0};
             Move previous_move{0};
@@ -58,6 +62,8 @@ namespace aurora::chess
         constexpr Score kInitialAspirationWindow = 25;
         constexpr Score kMinimumMateBound = kMateScore - 512;
         constexpr int kMaxHistoryScore = 1'000'000;
+        constexpr int kCorrectionHistoryScale = 256;
+        constexpr int kCorrectionHistoryLimit = 32'768;
         constexpr std::size_t kRootPvsDepth = 7;
         constexpr std::size_t kShallowRootVerificationMoves = 16;
         constexpr std::size_t kAccumulatorStackSize = 256;
@@ -102,6 +108,38 @@ namespace aurora::chess
             const Bitboard pieces = board.piece_bb(PieceType::Knight) | board.piece_bb(PieceType::Bishop) |
                                     board.piece_bb(PieceType::Rook) | board.piece_bb(PieceType::Queen);
             return (pieces & board.occupancy(color)) != 0;
+        }
+
+        [[nodiscard]] std::size_t pawn_correction_index(const Board& board) noexcept
+        {
+            const Bitboard pawns = board.piece_bb(PieceType::Pawn);
+            const std::uint64_t white = pawns & board.occupancy(Color::White);
+            const std::uint64_t black = pawns & board.occupancy(Color::Black);
+            std::uint64_t key = white ^ (black << 32) ^ (black >> 32);
+            key ^= key >> 30;
+            key *= 0xbf58476d1ce4e5b9ULL;
+            key ^= key >> 27;
+            return static_cast<std::size_t>(key) & (SearchState::kCorrectionHistorySize - 1);
+        }
+
+        [[nodiscard]] Score corrected_static_eval(const SearchState& state, const Board& board,
+                                                  Score raw_eval) noexcept
+        {
+            const auto color = static_cast<std::size_t>(board.side_to_move());
+            const int correction = state.pawn_correction_history[color][pawn_correction_index(board)];
+            return std::clamp(raw_eval + correction / kCorrectionHistoryScale, -kMinimumMateBound + 1,
+                              kMinimumMateBound - 1);
+        }
+
+        void update_pawn_correction_history(SearchState& state, const Board& board, Score error,
+                                            std::size_t depth) noexcept
+        {
+            const auto color = static_cast<std::size_t>(board.side_to_move());
+            int& entry = state.pawn_correction_history[color][pawn_correction_index(board)];
+            const int bonus = std::clamp(static_cast<int>(error) * static_cast<int>(depth) * 8,
+                                         -kCorrectionHistoryLimit / 4, kCorrectionHistoryLimit / 4);
+            entry = std::clamp(entry + bonus - entry * std::abs(bonus) / kCorrectionHistoryLimit,
+                               -kCorrectionHistoryLimit, kCorrectionHistoryLimit);
         }
 
         [[nodiscard]] constexpr std::size_t futility_move_count(std::size_t depth, bool improving) noexcept
@@ -676,7 +714,8 @@ namespace aurora::chess
                 stack.tt_move = tt_entry->best_move;
                 if (tt_entry->has_static_eval)
                 {
-                    stack.static_eval = tt_entry->static_eval;
+                    stack.unadjusted_static_eval = tt_entry->static_eval;
+                    stack.static_eval = corrected_static_eval(state_, board, stack.unadjusted_static_eval);
                     stack.static_eval_ready = true;
                 }
             }
@@ -685,7 +724,8 @@ namespace aurora::chess
             {
                 if (!stack.static_eval_ready)
                 {
-                    stack.static_eval = evaluate(board);
+                    stack.unadjusted_static_eval = evaluate(board);
+                    stack.static_eval = corrected_static_eval(state_, board, stack.unadjusted_static_eval);
                     stack.static_eval_ready = true;
                 }
                 return stack.static_eval;
@@ -825,7 +865,8 @@ namespace aurora::chess
                         if (score >= prob_cut_beta)
                         {
                             state_.table.store(board.key(), depth, score_to_tt(score, ply), Bound::Lower, move,
-                                               stack.static_eval_ready ? std::optional<Score>{stack.static_eval}
+                                               stack.static_eval_ready
+                                                   ? std::optional<Score>{stack.unadjusted_static_eval}
                                                                        : std::nullopt);
                             return score - (prob_cut_beta - beta);
                         }
@@ -1004,13 +1045,22 @@ namespace aurora::chess
                 best_score = alpha;
             }
 
+            if (!in_check && stack.static_eval_ready && !is_mate_score(best_score) &&
+                (best_move == 0 || !is_noisy(best_move)) &&
+                ((best_score < stack.static_eval && best_score < beta) ||
+                 (best_score > stack.static_eval && best_move != 0)))
+            {
+                update_pawn_correction_history(state_, board, best_score - stack.static_eval, depth);
+            }
+
             const Bound bound = best_score <= original_alpha ? Bound::Upper
                                 : best_score >= beta         ? Bound::Lower
                                                              : Bound::Exact;
             if (!stopped())
             {
                 state_.table.store(board.key(), depth, score_to_tt(best_score, ply), bound, best_move,
-                                   stack.static_eval_ready ? std::optional<Score>{stack.static_eval} : std::nullopt);
+                                   stack.static_eval_ready ? std::optional<Score>{stack.unadjusted_static_eval}
+                                                           : std::nullopt);
             }
             return best_score;
         }
@@ -1049,7 +1099,8 @@ namespace aurora::chess
                 stack.tt_move = tt_entry->best_move;
                 if (tt_entry->has_static_eval)
                 {
-                    stack.static_eval = tt_entry->static_eval;
+                    stack.unadjusted_static_eval = tt_entry->static_eval;
+                    stack.static_eval = corrected_static_eval(state_, board, stack.unadjusted_static_eval);
                     stack.static_eval_ready = true;
                 }
             }
@@ -1059,7 +1110,8 @@ namespace aurora::chess
             {
                 if (!stack.static_eval_ready)
                 {
-                    stack.static_eval = evaluate(board);
+                    stack.unadjusted_static_eval = evaluate(board);
+                    stack.static_eval = corrected_static_eval(state_, board, stack.unadjusted_static_eval);
                     stack.static_eval_ready = true;
                 }
                 return stack.static_eval;
@@ -1161,7 +1213,8 @@ namespace aurora::chess
                     if (!stopped())
                     {
                         state_.table.store(board.key(), 0, score_to_tt(beta, ply), Bound::Lower, move,
-                                           stack.static_eval_ready ? std::optional<Score>{stack.static_eval}
+                                           stack.static_eval_ready
+                                               ? std::optional<Score>{stack.unadjusted_static_eval}
                                                                    : std::nullopt);
                     }
                     return beta;
@@ -1183,7 +1236,8 @@ namespace aurora::chess
             {
                 const Bound bound = alpha <= original_alpha ? Bound::Upper : Bound::Exact;
                 state_.table.store(board.key(), 0, score_to_tt(alpha, ply), bound, best_move,
-                                   stack.static_eval_ready ? std::optional<Score>{stack.static_eval} : std::nullopt);
+                                   stack.static_eval_ready ? std::optional<Score>{stack.unadjusted_static_eval}
+                                                           : std::nullopt);
             }
             return alpha;
         }
