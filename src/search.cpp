@@ -874,6 +874,13 @@ namespace aurora::chess
                 }
             }
 
+            // Without a TT move, deep nodes lack a reliable first move. Spending the full
+            // depth there is usually less useful than reaching the next iteration sooner.
+            if (depth >= 4 && tt_move == 0)
+            {
+                --depth;
+            }
+
             const std::size_t child_depth = state_.enable_check_extension && in_check ? depth : depth - 1;
             Score best_score = -kInfiniteScore;
             Move best_move = 0;
