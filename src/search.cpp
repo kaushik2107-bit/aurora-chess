@@ -214,11 +214,12 @@ namespace aurora::chess
         }
 
         void update_quiet_history(SearchState& state, Move move, int bonus, Move previous_move,
-                                  std::size_t previous_piece_square, std::size_t current_piece_square)
+                                  std::size_t previous_piece_square, std::size_t current_piece_square,
+                                  bool update_counter_move = true)
         {
             apply_history_update(state.history[static_cast<std::size_t>(move)], bonus);
 
-            if (bonus > 0 && previous_move != 0)
+            if (update_counter_move && bonus > 0 && previous_move != 0)
             {
                 state.counter_moves[static_cast<std::size_t>(previous_move)] = move;
             }
@@ -762,6 +763,14 @@ namespace aurora::chess
 
                     if (alpha >= beta)
                     {
+                        if (tt_move != 0 && tt_score >= beta && !is_noisy(tt_move))
+                        {
+                            const std::size_t current_piece_square =
+                                piece_square_history_index(board.piece_on(move_from(tt_move)), move_to(tt_move));
+                            const int bonus = static_cast<int>(depth * depth);
+                            update_quiet_history(state_, tt_move, bonus, previous_move, previous_piece_square,
+                                                 current_piece_square, false);
+                        }
                         return tt_score;
                     }
                 }
