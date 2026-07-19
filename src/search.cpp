@@ -147,11 +147,13 @@ namespace aurora::chess
             return (3 + depth * depth) / (improving ? 1 : 2);
         }
 
-        [[nodiscard]] constexpr Score reverse_futility_margin(std::size_t depth, Move tt_move, bool improving) noexcept
+        [[nodiscard]] constexpr Score reverse_futility_margin(std::size_t depth, Move tt_move, bool improving,
+                                                               int tt_confidence) noexcept
         {
             const Score tt_bonus = tt_move != 0 ? 20 : 0;
             const Score improving_bonus = improving ? static_cast<Score>(45 * depth) : 0;
-            return static_cast<Score>(90 * depth) - improving_bonus - tt_bonus;
+            const Score confidence_adjustment = static_cast<Score>(20 * tt_confidence);
+            return static_cast<Score>(90 * depth) - improving_bonus - tt_bonus - confidence_adjustment;
         }
 
         [[nodiscard]] constexpr Score razor_margin(std::size_t depth) noexcept
@@ -159,11 +161,12 @@ namespace aurora::chess
             return static_cast<Score>(250 + 100 * depth * depth);
         }
 
-        [[nodiscard]] constexpr std::size_t null_move_reduction(std::size_t depth, Score eval_margin) noexcept
+        [[nodiscard]] constexpr std::size_t null_move_reduction(std::size_t depth, Score eval_margin,
+                                                                bool tt_supports_cutoff) noexcept
         {
             const auto margin_bonus =
                 static_cast<std::size_t>(std::min<Score>(3, std::max<Score>(0, eval_margin / 160)));
-            return std::min<std::size_t>(depth, 4 + depth / 3 + margin_bonus);
+            return std::min<std::size_t>(depth, 4 + depth / 3 + margin_bonus + (tt_supports_cutoff ? 1 : 0));
         }
 
         [[nodiscard]] constexpr Score quiet_futility_margin(std::size_t reduced_depth, int history_score,
@@ -266,6 +269,10 @@ namespace aurora::chess
                 --reduction;
             }
             else if (history_score < 256 && !pv_node)
+            {
+                ++reduction;
+            }
+            if (history_score < -3000 && !pv_node && move_number >= 4)
             {
                 ++reduction;
             }
@@ -825,6 +832,23 @@ namespace aurora::chess
                 }
             }
 
+            const Score tt_value = tt_entry ? score_from_tt(tt_entry->score, ply) : 0;
+            const bool tt_depth_close = tt_entry && tt_entry->depth + 2 >= depth;
+            const bool tt_supports_cutoff = tt_depth_close &&
+                (tt_entry->bound == Bound::Exact || tt_entry->bound == Bound::Lower) && tt_value >= beta;
+            const int tt_confidence = tt_supports_cutoff ? 1 : 0;
+            auto pruning_eval = [&]() noexcept -> Score
+            {
+                const Score static_eval = evaluate_static();
+                if (!tt_entry || is_mate_score(tt_value))
+                {
+                    return static_eval;
+                }
+                const bool lower_improves = tt_value > static_eval &&
+                    (tt_entry->bound == Bound::Exact || tt_entry->bound == Bound::Lower);
+                return lower_improves ? tt_value : static_eval;
+            };
+
             // At shallow, clearly failing nodes, quiescence can establish an upper bound much more cheaply than
             // searching every quiet move. The quadratic margin keeps the pruning deliberately conservative as the
             // remaining depth grows.
@@ -843,8 +867,8 @@ namespace aurora::chess
 
             if (pruning_node && !pv_node && !in_check && depth <= 8 && !is_mate_score(beta))
             {
-                const Score eval = evaluate_static();
-                const Score margin = reverse_futility_margin(depth, tt_move, is_improving());
+                const Score eval = pruning_eval();
+                const Score margin = reverse_futility_margin(depth, tt_move, is_improving(), tt_confidence);
                 if (eval - margin >= beta)
                 {
                     store_static_eval();
@@ -853,10 +877,10 @@ namespace aurora::chess
             }
 
             if (pruning_node && allow_null && !pv_node && !in_check && depth >= 3 && !is_mate_score(beta) &&
-                has_non_pawn_material(board, board.side_to_move()) && evaluate_static() >= beta)
+                has_non_pawn_material(board, board.side_to_move()) && pruning_eval() >= beta)
             {
-                const Score eval_margin = std::max<Score>(0, evaluate_static() - beta);
-                const std::size_t reduction = null_move_reduction(depth, eval_margin);
+                const Score eval_margin = std::max<Score>(0, pruning_eval() - beta);
+                const std::size_t reduction = null_move_reduction(depth, eval_margin, tt_supports_cutoff);
                 const std::size_t null_depth = depth > reduction ? depth - reduction : 0;
                 Board::UndoState null_state;
                 if (board.make_null_move(null_state))
@@ -885,17 +909,18 @@ namespace aurora::chess
 
             if (pruning_node && !pv_node && !in_check && depth >= 4 && !is_mate_score(beta))
             {
-                const Score prob_cut_beta = beta + (is_improving() ? 145 : 190);
+                const Score prob_cut_beta = beta + (is_improving() ? 145 : 190) - 20 * tt_confidence;
                 const bool tt_refutes_prob_cut =
-                    tt_entry && (tt_entry->bound == Bound::Exact || tt_entry->bound == Bound::Upper) &&
-                    score_from_tt(tt_entry->score, ply) < prob_cut_beta;
+                    tt_entry && tt_entry->depth + 3 >= depth &&
+                    (tt_entry->bound == Bound::Exact || tt_entry->bound == Bound::Upper) &&
+                    tt_value < prob_cut_beta;
                 if (!tt_refutes_prob_cut)
                 {
                     MovePicker prob_picker{board,
                                            move_ordering(tt_move, state_, ply, previous_move, previous_piece_square)};
                     for (Move move = prob_picker.next(); move != 0; move = prob_picker.next())
                     {
-                        if (!is_noisy(move) || !see_ge(board, move, prob_cut_beta - evaluate_static()))
+                        if (!is_noisy(move) || !see_ge(board, move, prob_cut_beta - pruning_eval()))
                         {
                             continue;
                         }
@@ -935,6 +960,14 @@ namespace aurora::chess
                 }
             }
 
+            const Score small_prob_cut_beta = beta + 400;
+            if (pruning_node && !pv_node && tt_entry && !is_mate_score(beta) && !is_mate_score(tt_value) &&
+                (tt_entry->bound == Bound::Exact || tt_entry->bound == Bound::Lower) &&
+                tt_entry->depth + 4 >= depth && tt_value >= small_prob_cut_beta)
+            {
+                return small_prob_cut_beta;
+            }
+
             // Without a TT move, deep nodes lack a reliable first move. Spending the full
             // depth there is usually less useful than reaching the next iteration sooner.
             if (depth >= 4 && tt_move == 0)
@@ -966,17 +999,37 @@ namespace aurora::chess
                     piece_square_history_index(board.piece_on(move_from(move)), move_to(move));
                 const int history_score =
                     noisy ? 0 : quiet_history_score(state_, move, previous_piece_square, current_piece_square);
-                const std::size_t estimated_reduction =
-                    late_move_reduction(child_depth, move_number, pv_node, noisy, false, history_score);
+                auto contextual_reduction = [&](std::size_t base) noexcept
+                {
+                    if (pv_node || move_number <= 1 || child_depth < 2)
+                    {
+                        return base;
+                    }
+                    if (tt_supports_cutoff)
+                    {
+                        ++base;
+                    }
+                    if (tt_move == 0 && move_number >= 4)
+                    {
+                        ++base;
+                    }
+                    if (!noisy && tt_move != 0 && is_noisy(tt_move))
+                    {
+                        ++base;
+                    }
+                    return std::min(base, child_depth - 1);
+                };
+                const std::size_t estimated_reduction = contextual_reduction(
+                    late_move_reduction(child_depth, move_number, pv_node, noisy, false, history_score));
                 const std::size_t estimated_lmr_depth =
                     child_depth > estimated_reduction ? child_depth - estimated_reduction : 0;
                 const Score capture_value = noisy ? captured_piece_value(board, move) : 0;
 
                 const bool noisy_see_bad = pruning_node && !pv_node && !in_check && best_move != 0 && noisy &&
-                                           depth <= 8 && !see_ge(board, move, -static_cast<Score>(150 * depth));
+                                           depth <= 8 && !see_ge(board, move, -static_cast<Score>(130 * depth));
                 const bool quiet_see_bad =
                     pruning_node && !pv_node && !in_check && best_move != 0 && quiet_late_move && depth <= 8 &&
-                    !see_ge(board, move, -static_cast<Score>(30 * estimated_lmr_depth * estimated_lmr_depth));
+                    !see_ge(board, move, -static_cast<Score>(25 * estimated_lmr_depth * estimated_lmr_depth));
 
                 Board::UndoState undo_state;
                 if (!make_search_move(board, move, undo_state))
@@ -993,11 +1046,18 @@ namespace aurora::chess
                     continue;
                 }
 
+                if (pruning_node && !pv_node && !in_check && !gives_check && best_move != 0 && quiet_late_move &&
+                    depth <= 6 && estimated_lmr_depth <= 2 && history_score < -2000)
+                {
+                    undo_search_move(board);
+                    continue;
+                }
+
                 if (pruning_node && !pv_node && !in_check && !gives_check && best_move != 0 && noisy && depth <= 7 &&
                     !is_promotion(move_flag(move)) && !is_mate_score(alpha))
                 {
                     const Score futility_score =
-                        evaluate_static() + static_cast<Score>(210 + 180 * estimated_lmr_depth) + capture_value;
+                        pruning_eval() + static_cast<Score>(210 + 180 * estimated_lmr_depth) + capture_value;
                     if (futility_score <= alpha)
                     {
                         best_score = std::max(best_score, futility_score);
@@ -1018,7 +1078,7 @@ namespace aurora::chess
                     if (!is_mate_score(alpha))
                     {
                         const Score margin = quiet_futility_margin(estimated_lmr_depth, history_score, tt_move);
-                        const Score futility_score = evaluate_static() + margin;
+                        const Score futility_score = pruning_eval() + margin;
                         if (futility_score <= alpha)
                         {
                             best_score = std::max(best_score, futility_score);
@@ -1042,10 +1102,10 @@ namespace aurora::chess
                     search_stack_[ply + 1].previous_move = move;
                     search_stack_[ply + 1].previous_piece_square = current_piece_square;
                 }
-                const std::size_t reduction =
+                const std::size_t reduction = contextual_reduction(
                     pruning_node && !in_check && !gives_check
                         ? late_move_reduction(child_depth, move_number, pv_node, noisy, gives_check, history_score)
-                        : 0;
+                        : 0);
                 if (move_number == 1)
                 {
                     score = -alpha_beta(board, child_depth, -beta, -alpha, ply + 1, child_pv, true, child_conservative);
@@ -1062,7 +1122,11 @@ namespace aurora::chess
                                         child_conservative);
                     if (reduction != 0 && score > alpha)
                     {
-                        score = -alpha_beta(board, child_depth, -alpha - 1, -alpha, ply + 1, child_pv, true,
+                        const std::size_t research_depth = child_depth > 1 && best_score != -kInfiniteScore &&
+                                                               score < best_score + 10
+                                                           ? child_depth - 1
+                                                           : child_depth;
+                        score = -alpha_beta(board, research_depth, -alpha - 1, -alpha, ply + 1, child_pv, true,
                                             child_conservative);
                     }
                     if (score > alpha && score < beta)
