@@ -10,8 +10,8 @@ namespace
 
     [[nodiscard]] bool load_test_network(aurora::chess::NnueEvaluator& evaluator)
     {
-        return evaluator.load("data/network-20220625.nnue") || evaluator.load("../data/network-20220625.nnue") ||
-               evaluator.load("../../data/network-20220625.nnue");
+        return evaluator.load("data/nn-1c0000000000.nnue") || evaluator.load("../data/nn-1c0000000000.nnue") ||
+               evaluator.load("../../data/nn-1c0000000000.nnue");
     }
 
     TEST(NnueTests, LoadsNetworkFile)
@@ -109,6 +109,30 @@ namespace
         aurora::chess::NnueEvaluator::Accumulator king_updated;
         evaluator.update_accumulator(king_root, king_board, king_board.last_dirty_piece(), king_updated);
         EXPECT_EQ(evaluator.evaluate(king_board), evaluator.evaluate(king_board, king_updated));
+    }
+
+    TEST(NnueTests, KingBucketRefreshCacheMatchesFullRefresh)
+    {
+        aurora::chess::NnueEvaluator evaluator;
+        ASSERT_TRUE(load_test_network(evaluator));
+        aurora::chess::NnueEvaluator::RefreshCache cache;
+
+        const std::array<aurora::chess::Board, 4> positions{
+            aurora::chess::Board{"4k3/8/8/8/8/8/4K3/R7 w - - 0 1"},
+            aurora::chess::Board{"4k3/8/8/8/8/4K3/8/R7 w - - 0 1"},
+            aurora::chess::Board{"4k3/8/8/8/8/8/R3K3/8 w - - 0 1"},
+            aurora::chess::Board{"4k3/8/8/8/8/8/3K3R/8 w - - 0 1"},
+        };
+        for (const auto& board : positions)
+        {
+            aurora::chess::NnueEvaluator::Accumulator cached;
+            aurora::chess::NnueEvaluator::Accumulator full;
+            evaluator.refresh_accumulator(board, cached, &cache);
+            evaluator.refresh_accumulator(board, full);
+            EXPECT_EQ(cached.values, full.values);
+            EXPECT_EQ(cached.psqt, full.psqt);
+            EXPECT_EQ(evaluator.evaluate(board, cached), evaluator.evaluate(board, full));
+        }
     }
 
     TEST(NnueTests, EngineLoadsNetworkAtStartup)

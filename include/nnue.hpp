@@ -14,13 +14,27 @@ namespace aurora::chess
     class NnueEvaluator final : public Evaluator
     {
     public:
-        static constexpr std::size_t kAccumulatorSize = 128;
+        static constexpr std::size_t kAccumulatorSize = 3072;
 
         struct Accumulator
         {
-            alignas(64) std::array<std::array<std::int32_t, kAccumulatorSize>, 2> values{};
+            alignas(64) std::array<std::array<std::int16_t, kAccumulatorSize>, 2> values{};
+            std::array<std::array<std::int32_t, 8>, 2> psqt{};
             std::array<Square, 2> king_squares{Square::NoSquare, Square::NoSquare};
             bool valid{false};
+        };
+
+        struct RefreshCacheEntry
+        {
+            alignas(64) std::array<std::int16_t, kAccumulatorSize> values{};
+            std::array<std::int32_t, 8> psqt{};
+            std::array<std::uint64_t, 11> features{};
+            bool valid{false};
+        };
+
+        struct RefreshCache
+        {
+            std::array<std::array<RefreshCacheEntry, 32>, 2> entries{};
         };
 
         NnueEvaluator();
@@ -39,15 +53,18 @@ namespace aurora::chess
         [[nodiscard]] Score evaluate(const Board& board) const noexcept override;
         [[nodiscard]] Score evaluate(const Board& board, const Accumulator& accumulator) const noexcept;
 
-        void refresh_accumulator(const Board& board, Accumulator& accumulator) const noexcept;
+        void refresh_accumulator(const Board& board, Accumulator& accumulator,
+                                 RefreshCache* cache = nullptr) const noexcept;
         void update_accumulator(const Accumulator& previous, const Board& board, const Board::DirtyPiece& dirty,
-                                Accumulator& next) const noexcept;
+                                Accumulator& next, RefreshCache* cache = nullptr) const noexcept;
 
     private:
         struct Network;
 
         void apply_feature(Accumulator& accumulator, Color perspective, Color piece_color, PieceType piece_type,
                            Square square, int sign) const noexcept;
+        void refresh_perspective(const Board& board, Color perspective, Accumulator& accumulator,
+                                 RefreshCache* cache) const noexcept;
 
         std::unique_ptr<Network> network_;
         PsqtEvaluator fallback_;
