@@ -70,7 +70,7 @@ namespace aurora::chess
     {
         constexpr std::size_t kBytesPerMegabyte = 1024 * 1024;
         const std::size_t bytes = std::max<std::size_t>(1, megabytes) * kBytesPerMegabyte;
-        const std::size_t entries = std::max<std::size_t>(1, bytes / sizeof(TranspositionEntry));
+        const std::size_t entries = std::max<std::size_t>(1, bytes / TranspositionTable::kEntryBytes);
         ttable_.resize(entries);
     }
 
@@ -87,6 +87,11 @@ namespace aurora::chess
     std::size_t Engine::thread_count() const noexcept
     {
         return threads_.size();
+    }
+
+    std::size_t Engine::hashfull() const noexcept
+    {
+        return ttable_.hashfull();
     }
 
     const Board& Engine::board() const noexcept

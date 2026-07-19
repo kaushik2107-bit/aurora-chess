@@ -35,12 +35,15 @@ namespace aurora::chess
     class TranspositionTable
     {
     public:
+        static constexpr std::size_t kEntryBytes = 16;
+
         explicit TranspositionTable(std::size_t entry_count = 1 << 20);
 
         void clear();
         void resize(std::size_t entry_count);
         void new_search() noexcept;
         [[nodiscard]] std::size_t entry_count() const;
+        [[nodiscard]] std::size_t hashfull() const noexcept;
         [[nodiscard]] std::optional<TranspositionEntry> probe(Key key) const;
         void store(Key key, std::size_t depth, Score score, Bound bound, Move best_move,
                    std::optional<Score> static_eval = std::nullopt);
@@ -51,11 +54,10 @@ namespace aurora::chess
 
         struct AtomicEntry
         {
-            std::atomic<std::uint64_t> sequence{0};
-            std::atomic<Key> key{0};
-            std::atomic<std::uint64_t> scores{0};
-            std::atomic<std::uint64_t> metadata{0};
+            std::atomic<std::uint64_t> data{0};
+            std::atomic<std::uint64_t> signature{0};
         };
+        static_assert(sizeof(AtomicEntry) == kEntryBytes);
 
         struct alignas(64) Cluster
         {

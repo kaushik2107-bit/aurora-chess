@@ -114,6 +114,18 @@ namespace
         EXPECT_EQ(replacement->score, -7);
     }
 
+    TEST(TranspositionTableTests, ReportsCurrentGenerationHashfullInPermille)
+    {
+        aurora::chess::TranspositionTable table{4};
+        EXPECT_EQ(table.hashfull(), 0);
+
+        table.store(1, 4, 12, aurora::chess::Bound::Lower, 0);
+        EXPECT_EQ(table.hashfull(), 250);
+
+        table.new_search();
+        EXPECT_EQ(table.hashfull(), 0);
+    }
+
     TEST(TranspositionTableTests, SupportsConcurrentStoreAndProbe)
     {
         aurora::chess::TranspositionTable table{1024};

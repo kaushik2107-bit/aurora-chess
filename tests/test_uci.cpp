@@ -50,6 +50,7 @@ namespace
         EXPECT_NO_THROW(aurora::chess::run_uci_loop(engine, input, output));
         EXPECT_NE(output.str().find("info depth 1"), std::string::npos);
         EXPECT_NE(output.str().find("info depth 2"), std::string::npos);
+        EXPECT_NE(output.str().find(" hashfull "), std::string::npos);
         EXPECT_NE(output.str().find("seldepth "), std::string::npos);
         EXPECT_NE(output.str().find("bestmove "), std::string::npos);
     }

@@ -32,6 +32,7 @@ namespace aurora::chess
         void set_thread_count(std::size_t threads);
         void set_use_nnue(bool enabled) noexcept;
         [[nodiscard]] std::size_t thread_count() const noexcept;
+        [[nodiscard]] std::size_t hashfull() const noexcept;
         [[nodiscard]] const Board& board() const noexcept;
         [[nodiscard]] MoveList legal_moves() const;
         [[nodiscard]] Score evaluate() const noexcept;

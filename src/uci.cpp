@@ -157,13 +157,13 @@ namespace aurora::chess
         }
 
         void print_search_info(std::ostream& output, const SearchIteration& iteration,
-                               std::chrono::steady_clock::duration elapsed)
+                               std::chrono::steady_clock::duration elapsed, std::size_t hashfull)
         {
             const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
             output << "info depth " << iteration.depth << " seldepth " << iteration.selective_depth << ' ';
             print_uci_score(output, iteration.score);
             output << " nodes " << iteration.nodes << " nps " << nodes_per_second(iteration.nodes, elapsed)
-                   << " time " << std::max<std::int64_t>(1, elapsed_ms);
+                   << " hashfull " << hashfull << " time " << std::max<std::int64_t>(1, elapsed_ms);
             if (!iteration.pv.empty())
             {
                 output << " pv";
@@ -518,7 +518,7 @@ namespace aurora::chess
                         {
                             limits.shared_deadline_ms = &deadline_ms_;
                         }
-                        limits.on_iteration = [this, &output, &output_mutex, search_start, time_plan,
+                        limits.on_iteration = [this, &engine, &output, &output_mutex, search_start, time_plan,
                                                ponder_search](const SearchIteration& iteration)
                         {
                             const auto now = std::chrono::steady_clock::now();
@@ -532,7 +532,7 @@ namespace aurora::chess
                             }
 
                             std::lock_guard lock{output_mutex};
-                            print_search_info(output, iteration, elapsed);
+                            print_search_info(output, iteration, elapsed, engine.hashfull());
                             if (stop_on_soft_time)
                             {
                                 stop_.store(true, std::memory_order_relaxed);

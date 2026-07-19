@@ -8,25 +8,36 @@ namespace aurora::chess
 {
     namespace
     {
-        constexpr std::uint64_t kMoveMask = 0xffffULL;
-        constexpr unsigned kDepthShift = 16;
-        constexpr unsigned kBoundShift = 32;
-        constexpr unsigned kEvalShift = 34;
-        constexpr unsigned kGenerationShift = 35;
+        constexpr std::uint64_t kSignatureMask = (std::uint64_t{1} << 63) - 1;
+        constexpr std::uint64_t kWriteLock = std::uint64_t{1} << 63;
+        constexpr unsigned kStaticEvalShift = 16;
+        constexpr unsigned kMoveShift = 32;
+        constexpr unsigned kDepthShift = 48;
+        constexpr unsigned kBoundShift = 56;
+        constexpr unsigned kHasEvalShift = 58;
+        constexpr unsigned kGenerationShift = 59;
+        constexpr std::uint8_t kGenerationMask = 0x1f;
 
-        [[nodiscard]] std::uint64_t pack_scores(Score score, Score static_eval) noexcept
+        [[nodiscard]] std::uint16_t pack_score(Score score) noexcept
         {
-            return static_cast<std::uint32_t>(score) |
-                   (static_cast<std::uint64_t>(static_cast<std::uint32_t>(static_eval)) << 32);
+            return std::bit_cast<std::uint16_t>(static_cast<std::int16_t>(std::clamp<Score>(
+                score, std::numeric_limits<std::int16_t>::min(), std::numeric_limits<std::int16_t>::max())));
         }
 
-        [[nodiscard]] std::uint64_t pack_metadata(const TranspositionEntry& entry, std::uint8_t generation) noexcept
+        [[nodiscard]] Score unpack_score(std::uint64_t value) noexcept
         {
-            return static_cast<std::uint64_t>(entry.best_move) |
-                   (static_cast<std::uint64_t>(entry.depth) << kDepthShift) |
+            return std::bit_cast<std::int16_t>(static_cast<std::uint16_t>(value));
+        }
+
+        [[nodiscard]] std::uint64_t pack_data(const TranspositionEntry& entry, std::uint8_t generation) noexcept
+        {
+            return static_cast<std::uint64_t>(pack_score(entry.score)) |
+                   (static_cast<std::uint64_t>(pack_score(entry.static_eval)) << kStaticEvalShift) |
+                   (static_cast<std::uint64_t>(entry.best_move) << kMoveShift) |
+                   (static_cast<std::uint64_t>(std::min<std::uint16_t>(entry.depth, 255)) << kDepthShift) |
                    (static_cast<std::uint64_t>(entry.bound) << kBoundShift) |
-                   (static_cast<std::uint64_t>(entry.has_static_eval) << kEvalShift) |
-                   (static_cast<std::uint64_t>(generation) << kGenerationShift);
+                   (static_cast<std::uint64_t>(entry.has_static_eval) << kHasEvalShift) |
+                   (static_cast<std::uint64_t>(generation & kGenerationMask) << kGenerationShift);
         }
 
         [[nodiscard]] int replacement_value(const TranspositionEntry& entry, std::uint8_t entry_generation,
@@ -36,7 +47,7 @@ namespace aurora::chess
             {
                 return std::numeric_limits<int>::min();
             }
-            const unsigned age = static_cast<std::uint8_t>(current_generation - entry_generation);
+            const unsigned age = (current_generation - entry_generation) & kGenerationMask;
             const int bound_bonus = entry.bound == Bound::Exact ? 12 : entry.bound == Bound::None ? -16 : 4;
             return static_cast<int>(entry.depth) * 4 + bound_bonus - static_cast<int>(age) * 8;
         }
@@ -52,29 +63,27 @@ namespace aurora::chess
     {
         for (int attempt = 0; attempt < 3; ++attempt)
         {
-            const std::uint64_t before = source.sequence.load(std::memory_order_acquire);
-            if ((before & 1U) != 0)
+            const std::uint64_t before = source.signature.load(std::memory_order_acquire);
+            if ((before & kWriteLock) != 0)
             {
                 continue;
             }
-            const Key key = source.key.load(std::memory_order_relaxed);
-            const std::uint64_t scores = source.scores.load(std::memory_order_relaxed);
-            const std::uint64_t metadata = source.metadata.load(std::memory_order_relaxed);
-            const std::uint64_t after = source.sequence.load(std::memory_order_acquire);
+            const std::uint64_t data = source.data.load(std::memory_order_relaxed);
+            const std::uint64_t after = source.signature.load(std::memory_order_acquire);
             if (before != after)
             {
                 continue;
             }
             destination = TranspositionEntry{
-                key,
-                static_cast<Move>(metadata & kMoveMask),
-                std::bit_cast<Score>(static_cast<std::uint32_t>(scores)),
-                std::bit_cast<Score>(static_cast<std::uint32_t>(scores >> 32)),
-                static_cast<std::uint16_t>((metadata >> kDepthShift) & 0xffffU),
-                static_cast<Bound>((metadata >> kBoundShift) & 0x3U),
-                ((metadata >> kEvalShift) & 1U) != 0,
+                before & kSignatureMask,
+                static_cast<Move>((data >> kMoveShift) & 0xffffU),
+                unpack_score(data),
+                unpack_score(data >> kStaticEvalShift),
+                static_cast<std::uint16_t>((data >> kDepthShift) & 0xffU),
+                static_cast<Bound>((data >> kBoundShift) & 0x3U),
+                ((data >> kHasEvalShift) & 1U) != 0,
             };
-            generation = static_cast<std::uint8_t>((metadata >> kGenerationShift) & 0xffU);
+            generation = static_cast<std::uint8_t>((data >> kGenerationShift) & kGenerationMask);
             return true;
         }
         return false;
@@ -83,21 +92,19 @@ namespace aurora::chess
     void TranspositionTable::write_entry(AtomicEntry& destination, const TranspositionEntry& source,
                                          std::uint8_t generation) noexcept
     {
-        std::uint64_t sequence = destination.sequence.load(std::memory_order_relaxed);
+        std::uint64_t signature = destination.signature.load(std::memory_order_relaxed);
         for (;;)
         {
-            if ((sequence & 1U) == 0 && destination.sequence.compare_exchange_weak(
-                                             sequence, sequence + 1, std::memory_order_acquire,
-                                             std::memory_order_relaxed))
+            if ((signature & kWriteLock) == 0 && destination.signature.compare_exchange_weak(
+                                                    signature, signature | kWriteLock,
+                                                    std::memory_order_acquire, std::memory_order_relaxed))
             {
                 break;
             }
-            sequence = destination.sequence.load(std::memory_order_relaxed);
+            signature = destination.signature.load(std::memory_order_relaxed);
         }
-        destination.key.store(source.key, std::memory_order_relaxed);
-        destination.scores.store(pack_scores(source.score, source.static_eval), std::memory_order_relaxed);
-        destination.metadata.store(pack_metadata(source, generation), std::memory_order_relaxed);
-        destination.sequence.store(sequence + 2, std::memory_order_release);
+        destination.data.store(pack_data(source, generation), std::memory_order_relaxed);
+        destination.signature.store(source.key & kSignatureMask, std::memory_order_release);
     }
 
     void TranspositionTable::clear()
@@ -121,7 +128,9 @@ namespace aurora::chess
 
     void TranspositionTable::new_search() noexcept
     {
-        generation_.fetch_add(1, std::memory_order_relaxed);
+        generation_.store(static_cast<std::uint8_t>((generation_.load(std::memory_order_relaxed) + 1) &
+                                                    kGenerationMask),
+                          std::memory_order_relaxed);
     }
 
     std::size_t TranspositionTable::entry_count() const
@@ -129,14 +138,37 @@ namespace aurora::chess
         return cluster_count_ * kClusterSize;
     }
 
+    std::size_t TranspositionTable::hashfull() const noexcept
+    {
+        const std::size_t sampled_clusters = std::min<std::size_t>(cluster_count_, 250);
+        const std::size_t sampled_entries = sampled_clusters * kClusterSize;
+        const auto current_generation = generation_.load(std::memory_order_relaxed) & kGenerationMask;
+        std::size_t used = 0;
+        for (std::size_t cluster = 0; cluster < sampled_clusters; ++cluster)
+        {
+            for (const auto& source : clusters_[cluster].entries)
+            {
+                TranspositionEntry entry;
+                std::uint8_t entry_generation = 0;
+                if (read_entry(source, entry, entry_generation) && entry_generation == current_generation &&
+                    (entry.bound != Bound::None || entry.has_static_eval))
+                {
+                    ++used;
+                }
+            }
+        }
+        return sampled_entries == 0 ? 0 : used * 1000 / sampled_entries;
+    }
+
     std::optional<TranspositionEntry> TranspositionTable::probe(Key key) const
     {
         const auto& cluster = clusters_[static_cast<std::size_t>(key % cluster_count_)];
+        const Key signature = key & kSignatureMask;
         for (const auto& source : cluster.entries)
         {
             TranspositionEntry entry;
             std::uint8_t generation = 0;
-            if (read_entry(source, entry, generation) && entry.key == key &&
+            if (read_entry(source, entry, generation) && entry.key == signature &&
                 (entry.bound != Bound::None || entry.has_static_eval))
             {
                 return entry;
@@ -148,6 +180,7 @@ namespace aurora::chess
     void TranspositionTable::store_static_eval(Key key, Score static_eval)
     {
         auto& cluster = clusters_[static_cast<std::size_t>(key % cluster_count_)];
+        const Key signature = key & kSignatureMask;
         AtomicEntry* empty = nullptr;
         for (auto& destination : cluster.entries)
         {
@@ -157,8 +190,9 @@ namespace aurora::chess
             {
                 continue;
             }
-            if (entry.key == key)
+            if (entry.key == signature)
             {
+                entry.key = key;
                 entry.static_eval = static_eval;
                 entry.has_static_eval = true;
                 write_entry(destination, entry, generation_.load(std::memory_order_relaxed));
@@ -180,6 +214,7 @@ namespace aurora::chess
                                    std::optional<Score> static_eval)
     {
         auto& cluster = clusters_[static_cast<std::size_t>(key % cluster_count_)];
+        const Key signature = key & kSignatureMask;
         const auto current_generation = generation_.load(std::memory_order_relaxed);
         AtomicEntry* target = nullptr;
         TranspositionEntry target_entry;
@@ -193,12 +228,13 @@ namespace aurora::chess
             {
                 continue;
             }
-            if (entry.key == key)
+            if (entry.key == signature)
             {
                 if (entry.depth > depth && best_move == 0)
                 {
                     if (static_eval)
                     {
+                        entry.key = key;
                         entry.static_eval = *static_eval;
                         entry.has_static_eval = true;
                         write_entry(destination, entry, current_generation);
@@ -221,7 +257,7 @@ namespace aurora::chess
         {
             return;
         }
-        if (best_move == 0 && target_entry.key == key)
+        if (best_move == 0 && target_entry.key == signature)
         {
             best_move = target_entry.best_move;
         }
@@ -231,8 +267,7 @@ namespace aurora::chess
                         best_move,
                         score,
                         static_eval.value_or(0),
-                        static_cast<std::uint16_t>(std::min<std::size_t>(
-                            depth, std::numeric_limits<std::uint16_t>::max())),
+                        static_cast<std::uint16_t>(std::min<std::size_t>(depth, 255)),
                         bound,
                         static_eval.has_value(),
                     },
