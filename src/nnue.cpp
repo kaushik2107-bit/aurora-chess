@@ -197,11 +197,12 @@ namespace aurora::chess
         for (auto& stack : next->stacks)
         {
             std::array<std::int8_t, kFc0Outputs * kTransformerDimensions> file_fc0_weight{};
+            std::array<std::int8_t, kFc1Outputs * 32> file_fc1_weight{};
             if (!read_value(input, component_hash) ||
                 !read_values(input, stack.fc0_bias.data(), stack.fc0_bias.size()) ||
                 !read_values(input, file_fc0_weight.data(), file_fc0_weight.size()) ||
                 !read_values(input, stack.fc1_bias.data(), stack.fc1_bias.size()) ||
-                !read_values(input, stack.fc1_weight.data(), stack.fc1_weight.size()) ||
+                !read_values(input, file_fc1_weight.data(), file_fc1_weight.size()) ||
                 !read_value(input, stack.output_bias) ||
                 !read_values(input, stack.output_weight.data(), stack.output_weight.size()))
             {
@@ -213,6 +214,14 @@ namespace aurora::chess
                 {
                     stack.fc0_weight[(in / 4) * (kFc0Outputs * 4) + out * 4 + in % 4] =
                         file_fc0_weight[out * kTransformerDimensions + in];
+                }
+            }
+            for (std::size_t out = 0; out < kFc1Outputs; ++out)
+            {
+                for (std::size_t in = 0; in < 32; ++in)
+                {
+                    stack.fc1_weight[(in / 4) * (kFc1Outputs * 4) + out * 4 + in % 4] =
+                        file_fc1_weight[out * 32 + in];
                 }
             }
         }
@@ -443,12 +452,28 @@ namespace aurora::chess
         {
             const auto& values = accumulator.values[p == 0 ? stm : other];
             const std::size_t offset = p * half;
+#if defined(__AVX2__)
+            const __m256i zero = _mm256_setzero_si256();
+            const __m256i upper = _mm256_set1_epi16(254);
+            for (std::size_t i = 0; i < half; i += 16)
+            {
+                __m256i a = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values.data() + i));
+                __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values.data() + i + half));
+                a = _mm256_slli_epi16(_mm256_max_epi16(_mm256_min_epi16(a, upper), zero), 7);
+                b = _mm256_min_epi16(b, upper);
+                const __m256i product = _mm256_mulhi_epi16(a, b);
+                const __m128i packed = _mm_packus_epi16(_mm256_castsi256_si128(product),
+                                                        _mm256_extracti128_si256(product, 1));
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(transformed.data() + offset + i), packed);
+            }
+#else
             for (std::size_t i = 0; i < half; ++i)
             {
                 const int a = std::clamp<int>(values[i], 0, 254);
                 const int b = std::clamp<int>(values[i + half], 0, 254);
                 transformed[offset + i] = static_cast<std::uint8_t>(a * b / 512);
             }
+#endif
         }
         const int piece_count = popcount(board.all_occupancy());
         const std::size_t bucket = static_cast<std::size_t>(std::clamp((piece_count - 1) / 4, 0, 7));
@@ -457,18 +482,28 @@ namespace aurora::chess
 #if defined(__AVXVNNI__)
         __m256i low = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(stack.fc0_bias.data()));
         __m256i high = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(stack.fc0_bias.data() + 8));
-        for (std::size_t in = 0; in < kTransformerDimensions; in += 4)
+        constexpr std::size_t block_count = kTransformerDimensions / 4;
+        alignas(32) std::array<std::uint16_t, block_count> nonzero{};
+        std::size_t nonzero_count = 0;
+        const auto* input32 = reinterpret_cast<const std::int32_t*>(transformed.data());
+        const __m256i zero32 = _mm256_setzero_si256();
+        for (std::size_t block = 0; block < block_count; block += 8)
         {
-            const std::uint32_t inputs = static_cast<std::uint32_t>(transformed[in]) |
-                                         (static_cast<std::uint32_t>(transformed[in + 1]) << 8) |
-                                         (static_cast<std::uint32_t>(transformed[in + 2]) << 16) |
-                                         (static_cast<std::uint32_t>(transformed[in + 3]) << 24);
-            if (inputs == 0)
+            const __m256i values = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(input32 + block));
+            unsigned mask = static_cast<unsigned>(~_mm256_movemask_ps(
+                                _mm256_castsi256_ps(_mm256_cmpeq_epi32(values, zero32)))) & 0xffu;
+            while (mask != 0)
             {
-                continue;
+                const unsigned lane = std::countr_zero(mask);
+                nonzero[nonzero_count++] = static_cast<std::uint16_t>(block + lane);
+                mask &= mask - 1;
             }
-            const __m256i packed = _mm256_set1_epi32(static_cast<int>(inputs));
-            const auto* weights = stack.fc0_weight.data() + (in / 4) * (kFc0Outputs * 4);
+        }
+        for (std::size_t i = 0; i < nonzero_count; ++i)
+        {
+            const std::size_t block = nonzero[i];
+            const __m256i packed = _mm256_set1_epi32(input32[block]);
+            const auto* weights = stack.fc0_weight.data() + block * (kFc0Outputs * 4);
             low = _mm256_dpbusd_avx_epi32(low, packed,
                                           _mm256_loadu_si256(reinterpret_cast<const __m256i*>(weights)));
             high = _mm256_dpbusd_avx_epi32(high, packed,
@@ -498,14 +533,40 @@ namespace aurora::chess
                 static_cast<std::int64_t>(fc0[i]) * fc0[i] >> 19));
             hidden_input[15 + i] = clipped_relu(fc0[i]);
         }
-        std::array<std::int32_t, 32> fc1 = stack.fc1_bias;
+        std::array<std::int32_t, 32> fc1{};
+#if defined(__AVXVNNI__)
+        std::array<__m256i, 4> fc1_acc{
+            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(stack.fc1_bias.data())),
+            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(stack.fc1_bias.data() + 8)),
+            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(stack.fc1_bias.data() + 16)),
+            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(stack.fc1_bias.data() + 24)),
+        };
+        const auto* hidden32 = reinterpret_cast<const std::int32_t*>(hidden_input.data());
+        for (std::size_t block = 0; block < 8; ++block)
+        {
+            const __m256i packed = _mm256_set1_epi32(hidden32[block]);
+            const auto* weights = stack.fc1_weight.data() + block * (kFc1Outputs * 4);
+            for (std::size_t reg = 0; reg < 4; ++reg)
+            {
+                fc1_acc[reg] = _mm256_dpbusd_avx_epi32(
+                    fc1_acc[reg], packed,
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(weights + reg * 32)));
+            }
+        }
+        for (std::size_t reg = 0; reg < 4; ++reg)
+        {
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(fc1.data() + reg * 8), fc1_acc[reg]);
+        }
+#else
+        fc1 = stack.fc1_bias;
         for (std::size_t out = 0; out < 32; ++out)
         {
             for (std::size_t in = 0; in < 32; ++in)
             {
-                fc1[out] += stack.fc1_weight[out * 32 + in] * hidden_input[in];
+                fc1[out] += stack.fc1_weight[(in / 4) * (kFc1Outputs * 4) + out * 4 + in % 4] * hidden_input[in];
             }
         }
+#endif
         std::int32_t positional = stack.output_bias;
         for (std::size_t i = 0; i < 32; ++i)
         {
