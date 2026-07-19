@@ -40,12 +40,78 @@ namespace
         EXPECT_EQ(entry->static_eval, -12);
     }
 
+    TEST(TranspositionTableTests, StoresEvaluationWithoutSearchBound)
+    {
+        aurora::chess::TranspositionTable table{16};
+        constexpr aurora::chess::Key key = 0x9876;
+
+        table.store_static_eval(key, 31);
+
+        const auto entry = table.probe(key);
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->bound, aurora::chess::Bound::None);
+        EXPECT_TRUE(entry->has_static_eval);
+        EXPECT_EQ(entry->static_eval, 31);
+    }
+
+    TEST(TranspositionTableTests, EvaluationOnlyStorePreservesCollidingBound)
+    {
+        aurora::chess::TranspositionTable table{1};
+        constexpr aurora::chess::Key valuable_key = 1;
+        constexpr aurora::chess::Move move =
+            aurora::chess::make_move(aurora::chess::Square::E2, aurora::chess::Square::E4);
+        table.store(valuable_key, 8, 42, aurora::chess::Bound::Exact, move);
+
+        table.store_static_eval(2, -18);
+
+        const auto entry = table.probe(valuable_key);
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->depth, 8);
+        EXPECT_EQ(entry->score, 42);
+        EXPECT_EQ(entry->best_move, move);
+        EXPECT_EQ(entry->bound, aurora::chess::Bound::Exact);
+    }
+
     TEST(TranspositionTableTests, MissesDifferentKeys)
     {
         aurora::chess::TranspositionTable table{16};
         table.store(0x1234, 5, 42, aurora::chess::Bound::Exact, 0);
 
         EXPECT_FALSE(table.probe(0x5678).has_value());
+    }
+
+    TEST(TranspositionTableTests, RetainsMultipleCollidingEntriesInCluster)
+    {
+        aurora::chess::TranspositionTable table{4};
+        for (aurora::chess::Key key = 1; key <= 4; ++key)
+        {
+            table.store(key, key, -static_cast<aurora::chess::Score>(key), aurora::chess::Bound::Lower, 0);
+        }
+        for (aurora::chess::Key key = 1; key <= 4; ++key)
+        {
+            const auto entry = table.probe(key);
+            ASSERT_TRUE(entry.has_value());
+            EXPECT_EQ(entry->score, -static_cast<aurora::chess::Score>(key));
+        }
+    }
+
+    TEST(TranspositionTableTests, ReplacesAgedClusterEntry)
+    {
+        aurora::chess::TranspositionTable table{4};
+        for (aurora::chess::Key key = 1; key <= 4; ++key)
+        {
+            table.store(key, 8, 20, aurora::chess::Bound::Lower, 0);
+        }
+        for (int generation = 0; generation < 8; ++generation)
+        {
+            table.new_search();
+        }
+
+        table.store(5, 1, -7, aurora::chess::Bound::Upper, 0);
+
+        const auto replacement = table.probe(5);
+        ASSERT_TRUE(replacement.has_value());
+        EXPECT_EQ(replacement->score, -7);
     }
 
     TEST(TranspositionTableTests, SupportsConcurrentStoreAndProbe)

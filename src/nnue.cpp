@@ -446,7 +446,7 @@ namespace aurora::chess
         }
         const std::size_t stm = static_cast<std::size_t>(board.side_to_move());
         const std::size_t other = 1 - stm;
-        std::array<std::uint8_t, kTransformerDimensions> transformed{};
+        std::array<std::uint8_t, kTransformerDimensions> transformed;
         constexpr std::size_t half = kTransformerDimensions / 2;
         for (std::size_t p = 0; p < 2; ++p)
         {
@@ -478,12 +478,12 @@ namespace aurora::chess
         const int piece_count = popcount(board.all_occupancy());
         const std::size_t bucket = static_cast<std::size_t>(std::clamp((piece_count - 1) / 4, 0, 7));
         const auto& stack = network_->stacks[bucket];
-        std::array<std::int32_t, kFc0Outputs> fc0{};
+        std::array<std::int32_t, kFc0Outputs> fc0;
 #if defined(__AVXVNNI__)
         __m256i low = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(stack.fc0_bias.data()));
         __m256i high = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(stack.fc0_bias.data() + 8));
         constexpr std::size_t block_count = kTransformerDimensions / 4;
-        alignas(32) std::array<std::uint16_t, block_count> nonzero{};
+        alignas(32) std::array<std::uint16_t, block_count> nonzero;
         std::size_t nonzero_count = 0;
         const auto* input32 = reinterpret_cast<const std::int32_t*>(transformed.data());
         const __m256i zero32 = _mm256_setzero_si256();
@@ -533,7 +533,7 @@ namespace aurora::chess
                 static_cast<std::int64_t>(fc0[i]) * fc0[i] >> 19));
             hidden_input[15 + i] = clipped_relu(fc0[i]);
         }
-        std::array<std::int32_t, 32> fc1{};
+        std::array<std::int32_t, 32> fc1;
 #if defined(__AVXVNNI__)
         std::array<__m256i, 4> fc1_acc{
             _mm256_loadu_si256(reinterpret_cast<const __m256i*>(stack.fc1_bias.data())),

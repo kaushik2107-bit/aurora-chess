@@ -773,6 +773,13 @@ namespace aurora::chess
                 }
                 return stack.static_eval;
             };
+            auto store_static_eval = [&]()
+            {
+                if (stack.static_eval_ready)
+                {
+                    state_.table.store_static_eval(board.key(), stack.unadjusted_static_eval);
+                }
+            };
             auto is_improving = [&]() noexcept -> bool
             {
                 if (ply < 2)
@@ -828,6 +835,7 @@ namespace aurora::chess
                 const Score razor_score = quiescence(board, alpha - 1, alpha, ply, razor_pv);
                 if (razor_score <= alpha)
                 {
+                    store_static_eval();
                     pv.clear();
                     return razor_score;
                 }
@@ -839,6 +847,7 @@ namespace aurora::chess
                 const Score margin = reverse_futility_margin(depth, tt_move, is_improving());
                 if (eval - margin >= beta)
                 {
+                    store_static_eval();
                     return beta + (eval - beta) / 3;
                 }
             }
@@ -863,6 +872,7 @@ namespace aurora::chess
                     board.undo_move();
                     if (score >= beta)
                     {
+                        store_static_eval();
                         return score;
                     }
                 }
@@ -1174,6 +1184,13 @@ namespace aurora::chess
                 }
                 return stack.static_eval;
             };
+            auto store_static_eval = [&]()
+            {
+                if (stack.static_eval_ready)
+                {
+                    state_.table.store_static_eval(board.key(), stack.unadjusted_static_eval);
+                }
+            };
 
             if (!pv_node && tt_entry)
             {
@@ -1202,6 +1219,7 @@ namespace aurora::chess
                 const Score stand_pat = evaluate_static();
                 if (stand_pat >= beta)
                 {
+                    store_static_eval();
                     return beta;
                 }
                 alpha = std::max(alpha, stand_pat);
@@ -1391,6 +1409,7 @@ namespace aurora::chess
 
     SearchResult search(const Board& board, SearchLimits limits, TranspositionTable& table, const Evaluator& evaluator)
     {
+        table.new_search();
         const std::size_t worker_count = std::max<std::size_t>(
             1, std::min<std::size_t>(limits.threads,
                                      limits.thread_pool != nullptr ? limits.thread_pool->size() : limits.threads));

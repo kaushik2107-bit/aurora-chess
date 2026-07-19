@@ -2,9 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
+#include <array>
+#include <memory>
 #include <optional>
-#include <shared_mutex>
-#include <vector>
 
 #include "board.hpp"
 #include "evaluation.hpp"
@@ -38,14 +39,37 @@ namespace aurora::chess
 
         void clear();
         void resize(std::size_t entry_count);
+        void new_search() noexcept;
         [[nodiscard]] std::size_t entry_count() const;
         [[nodiscard]] std::optional<TranspositionEntry> probe(Key key) const;
         void store(Key key, std::size_t depth, Score score, Bound bound, Move best_move,
                    std::optional<Score> static_eval = std::nullopt);
+        void store_static_eval(Key key, Score static_eval);
 
     private:
-        mutable std::shared_mutex mutex_;
-        std::vector<TranspositionEntry> entries_;
+        static constexpr std::size_t kClusterSize = 4;
+
+        struct AtomicEntry
+        {
+            std::atomic<std::uint64_t> sequence{0};
+            std::atomic<Key> key{0};
+            std::atomic<std::uint64_t> scores{0};
+            std::atomic<std::uint64_t> metadata{0};
+        };
+
+        struct alignas(64) Cluster
+        {
+            std::array<AtomicEntry, kClusterSize> entries{};
+        };
+
+        [[nodiscard]] bool read_entry(const AtomicEntry& source, TranspositionEntry& destination,
+                                      std::uint8_t& generation) const noexcept;
+        void write_entry(AtomicEntry& destination, const TranspositionEntry& source,
+                         std::uint8_t generation) noexcept;
+
+        std::unique_ptr<Cluster[]> clusters_;
+        std::size_t cluster_count_{1};
+        std::atomic<std::uint8_t> generation_{0};
     };
 
 } // namespace aurora::chess
